@@ -125,8 +125,18 @@ async function withRetry<T>(work: () => Promise<T>, delayMs: number, signal?: Ab
   }
 }
 
-export function createCodexProvider(options: { baseUrl: string; apiKey?: string; model: string; effort: string; retryDelayMs?: number }): Provider {
-  const { baseUrl, apiKey, model, effort, retryDelayMs = 2000 } = options;
+export const CODEX_SERVICE_TIERS = ["priority", "default"] as const;
+export type CodexServiceTier = (typeof CODEX_SERVICE_TIERS)[number];
+
+export function createCodexProvider(options: {
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+  effort: string;
+  serviceTier?: CodexServiceTier;
+  retryDelayMs?: number;
+}): Provider {
+  const { baseUrl, apiKey, model, effort, serviceTier = "priority", retryDelayMs = 2000 } = options;
 
   async function once(lang: string, items: Item[], signal?: AbortSignal) {
     if (!apiKey) throw new Error("CODEX_GATEWAY_API_KEY is not set");
@@ -142,6 +152,7 @@ export function createCodexProvider(options: { baseUrl: string; apiKey?: string;
           store: false,
           stream: true,
           reasoning: { effort },
+          ...(serviceTier === "priority" ? { service_tier: "priority" } : {}),
         }),
         signal: requestSignal(signal),
       });
@@ -272,13 +283,18 @@ export const mockProvider: Provider = {
 export function providerFromEnv(env = process.env): Provider {
   const effort = env.SLT_EFFORT ?? "medium";
   switch (env.SLT_TRANSLATOR ?? "codex") {
-    case "codex":
+    case "codex": {
+      const serviceTier = env.CODEX_SERVICE_TIER ?? "priority";
+      if (!CODEX_SERVICE_TIERS.includes(serviceTier as CodexServiceTier))
+        throw new Error(`CODEX_SERVICE_TIER must be one of ${CODEX_SERVICE_TIERS.join(", ")}: ${serviceTier}`);
       return createCodexProvider({
         baseUrl: env.CODEX_GATEWAY_BASE_URL ?? "http://192.168.0.9:8080/v1",
         apiKey: env.CODEX_GATEWAY_API_KEY,
         model: env.CODEX_MODEL ?? "gpt-6-astra",
         effort,
+        serviceTier: serviceTier as CodexServiceTier,
       });
+    }
     case "openrouter":
       return createOpenRouterProvider({
         baseUrl: env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",

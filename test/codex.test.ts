@@ -22,7 +22,8 @@ beforeEach(() => {
 });
 
 const baseUrl = `http://127.0.0.1:${server.port}/v1`;
-const provider = (apiKey = "cg_test") => createCodexProvider({ baseUrl, apiKey, model: "gpt-6-astra", effort: "low", retryDelayMs: 1 });
+const provider = (apiKey = "cg_test", serviceTier?: "priority" | "default") =>
+  createCodexProvider({ baseUrl, apiKey, model: "gpt-6-astra", effort: "low", serviceTier, retryDelayMs: 1 });
 
 const sse = (events: object[], chunkSize = 7) => {
   const text = events.map((e) => `event: ${(e as { type: string }).type}\r\ndata: ${JSON.stringify(e)}\r\n\r\n`).join("");
@@ -80,6 +81,7 @@ test("sends the request shape the gateway requires and joins streamed deltas", a
   expect(typeof body.instructions).toBe("string");
   expect((body.instructions as string).length).toBeGreaterThan(0);
   expect(body.reasoning).toEqual({ effort: "low" });
+  expect(body.service_tier).toBe("priority");
   expect(body).not.toHaveProperty("temperature");
   expect(body).not.toHaveProperty("max_output_tokens");
   expect(body).not.toHaveProperty("previous_response_id");
@@ -159,4 +161,16 @@ test("providerFromEnv defaults to the codex gateway", () => {
   expect(providerFromEnv({}).id).toBe("codex:gpt-6-astra:medium");
   expect(providerFromEnv({ SLT_TRANSLATOR: "mock" }).id).toBe("mock");
   expect(() => providerFromEnv({ SLT_TRANSLATOR: "nope" })).toThrow();
+});
+
+test("service tier default leaves service_tier out of the request", async () => {
+  handler = () => sse(streamOf(ANSWER));
+  await provider("cg_test", "default").translate("ko", [{ i: 0, text: "x" }]);
+  expect(requests[0]).not.toHaveProperty("service_tier");
+});
+
+test("CODEX_SERVICE_TIER accepts priority and default only", () => {
+  expect(() => providerFromEnv({ CODEX_SERVICE_TIER: "default" })).not.toThrow();
+  expect(() => providerFromEnv({ CODEX_SERVICE_TIER: "priority" })).not.toThrow();
+  expect(() => providerFromEnv({ CODEX_SERVICE_TIER: "fast" })).toThrow("CODEX_SERVICE_TIER");
 });

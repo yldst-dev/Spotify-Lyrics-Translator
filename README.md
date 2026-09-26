@@ -80,6 +80,9 @@ OpenAI Responses API 형식의 codex-gateway로 요청합니다. 게이트웨이
 | `CODEX_GATEWAY_BASE_URL` | `http://192.168.0.9:8080/v1` | 게이트웨이 주소 |
 | `CODEX_GATEWAY_API_KEY` | 없음 | 관리 화면에서 만든 `cg_` 키. 이 용도 전용으로 따로 만드는 것을 권합니다 |
 | `CODEX_MODEL` | `gpt-6-astra` | 게이트웨이 `/v1/models`에 있는 모델 |
+| `CODEX_SERVICE_TIER` | `priority` | `priority`면 fast 모드, `default`면 표준 속도 |
+
+fast 모드는 기본으로 켜져 있습니다. 요청에 `"service_tier": "priority"`를 넣어 Codex CLI의 `/fast on`과 같게 처리합니다. 글자가 나오는 속도가 빨라지는 대신 ChatGPT 요금제의 Codex 사용량을 표준의 2.5배 씁니다. 모델이 fast 모드를 지원하지 않으면 오류 없이 표준 속도로 처리됩니다. 사용량을 아끼려면 `CODEX_SERVICE_TIER=default`로 둡니다. 속도만 달라지고 번역 결과는 같아서, 값을 바꿔도 이미 캐시된 번역을 그대로 씁니다.
 
 ### OpenRouter (`SLT_TRANSLATOR=openrouter`)
 
