@@ -1,0 +1,17 @@
+{
+  "name": "spotify-lyrics-translator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install-agent": "bun src/cli.ts install",
+    "restart-agent": "bun src/cli.ts restart",
+    "uninstall-agent": "bun src/cli.ts uninstall",
+    "logs": "bun src/cli.ts logs",
+    "status": "bun src/cli.ts status",
+    "apply": "bun src/cli.ts apply",
+    "restore": "bun src/cli.ts restore",
+    "daemon": "bun src/daemon.ts",
+    "dev": "SLT_DEV=1 bun src/daemon.ts",
+    "test": "bun test"
+  }
+}
