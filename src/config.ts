@@ -9,4 +9,5 @@ export const SPOTIFY_ORIGIN = "https://xpui.app.spotify.com";
 export const EXTENSION = join(ROOT, "extension/lyrics-translator.js");
 export const DEV_LOADER = join(ROOT, "extension/dev-loader.js");
 export const DEV = process.env.SLT_DEV === "1";
+export const AUTO_UPDATE = process.env.SLT_AUTO_UPDATE !== "0";
 export const LAUNCHD_LABEL = "local.spotify-lyrics-translator";

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { DATA_DIR, DEV_LOADER, EXTENSION, LAUNCHD_LABEL, ROOT } from "./config";
 import { spotify } from "./patcher";
+import { applyUpdate, currentVersion, isNewer, latestRelease } from "./updater";
 
 const PLIST = join(homedir(), "Library/LaunchAgents", `${LAUNCHD_LABEL}.plist`);
 const DOMAIN = `gui/${process.getuid?.()}`;
@@ -47,6 +48,22 @@ async function logs() {
   await $`tail -n 50 -f ${join(DATA_DIR, "daemon.log")}`;
 }
 
+async function update() {
+  const [current, latest] = await Promise.all([currentVersion(), latestRelease()]);
+  if (!latest || !isNewer(latest, current)) {
+    console.log(`up to date (v${current})`);
+    return;
+  }
+  const result = await applyUpdate(latest);
+  if (result.status === "skipped") {
+    console.log(`update to ${latest} skipped: ${result.reason}`);
+    return;
+  }
+  console.log(`updated v${current} to ${result.to}`);
+  await $`launchctl kickstart -k ${DOMAIN}/${LAUNCHD_LABEL}`.quiet().nothrow();
+  console.log("restart Spotify to load the new extension");
+}
+
 async function uninstall() {
   await $`launchctl bootout ${DOMAIN}/${LAUNCHD_LABEL}`.quiet().nothrow();
   await rm(PLIST, { force: true });
@@ -61,6 +78,8 @@ const commands: Record<string, () => Promise<unknown>> = {
   install,
   restart,
   logs,
+  update,
+  version: async () => console.log(`v${await currentVersion()}`),
   uninstall,
 };
 

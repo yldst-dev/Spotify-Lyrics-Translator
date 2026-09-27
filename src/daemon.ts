@@ -1,12 +1,16 @@
 import { stat } from "node:fs/promises";
-import { DEV, DEV_LOADER, EXTENSION, PORT, SPOTIFY_ORIGIN } from "./config";
+import { AUTO_UPDATE, DEV, DEV_LOADER, EXTENSION, PORT, SPOTIFY_ORIGIN } from "./config";
 import { hashFile, spotify } from "./patcher";
 import { createTranslator, isSupportedLanguage, providerFromEnv } from "./translator";
+import { applyUpdate, currentVersion, isNewer, isSpotifyRunning, latestRelease } from "./updater";
 
 const TRACK_ID = /^[A-Za-z0-9]{22}$/;
 const MAX_LINES = 400;
 const MAX_LINE_LENGTH = 500;
 const WATCH_INTERVAL_MS = 30_000;
+const SPOTIFY_POLL_MS = 5_000;
+const UPDATE_MIN_INTERVAL_MS = 10 * 60_000;
+const UPDATE_PERIOD_MS = 6 * 60 * 60_000;
 
 const CORS = {
   "access-control-allow-origin": SPOTIFY_ORIGIN,
@@ -97,6 +101,44 @@ async function ensurePatched() {
   }
 }
 
+let lastUpdateCheck = 0;
+let updating = false;
+
+async function checkForUpdate(reason: string) {
+  if (DEV || !AUTO_UPDATE || updating || Date.now() - lastUpdateCheck < UPDATE_MIN_INTERVAL_MS) return;
+  lastUpdateCheck = Date.now();
+  updating = true;
+  try {
+    const [current, latest] = await Promise.all([currentVersion(), latestRelease()]);
+    if (!latest || !isNewer(latest, current)) return;
+    const result = await applyUpdate(latest);
+    if (result.status === "skipped") {
+      log(`update to ${latest} skipped on ${reason}: ${result.reason}`);
+      return;
+    }
+    log(`updated ${current} to ${result.to} on ${reason}, restarting`);
+    setTimeout(() => process.exit(0), 200);
+  } catch (error) {
+    log("update check failed", String(error));
+  } finally {
+    updating = false;
+  }
+}
+
+let spotifyRunning = await isSpotifyRunning();
+
+async function watchSpotify() {
+  const running = await isSpotifyRunning();
+  if (running === spotifyRunning) return;
+  spotifyRunning = running;
+  await checkForUpdate(running ? "spotify start" : "spotify quit");
+}
+
 await ensurePatched();
 setInterval(ensurePatched, WATCH_INTERVAL_MS);
-log(`listening on 127.0.0.1:${PORT} with ${provider.id}${DEV ? " (dev)" : ""}`);
+setInterval(watchSpotify, SPOTIFY_POLL_MS);
+setInterval(() => checkForUpdate("schedule"), UPDATE_PERIOD_MS);
+setTimeout(() => checkForUpdate("startup"), 10_000);
+log(
+  `v${await currentVersion()} listening on 127.0.0.1:${PORT} with ${provider.id}${DEV ? " (dev)" : ""}${AUTO_UPDATE && !DEV ? "" : " (auto update off)"}`,
+);
