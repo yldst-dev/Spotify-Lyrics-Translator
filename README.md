@@ -130,7 +130,7 @@ fast 모드는 기본으로 켜져 있습니다. 요청에 `"service_tier": "pri
 
 데몬이 GitHub의 최신 릴리스를 확인해서 새 버전이 있으면 스스로 업데이트합니다.
 
-1. Spotify를 끄거나 켤 때, 데몬이 시작될 때, 그리고 6시간마다 `releases/latest`를 확인합니다. GitHub API 한도 때문에 확인은 10분에 한 번까지만 합니다.
+1. Spotify를 끄거나 켤 때, 데몬이 시작될 때, 그리고 6시간마다 `releases/latest`를 확인합니다. GitHub API 한도 때문에 Spotify를 끄고 켤 때는 1분에 한 번, 나머지는 10분에 한 번까지만 확인합니다.
 2. `vX.Y.Z` 형식의 정식 릴리스가 지금 버전보다 새로우면, 그 태그를 받아 앞으로만 옮깁니다(fast-forward).
 3. 데몬이 새 코드로 다시 시작되고, Spotify 안의 확장도 새 버전으로 바꿔 넣습니다.
 4. Spotify를 다시 켜면 새 확장이 로드됩니다.
@@ -168,7 +168,8 @@ bun run logs
 | `gateway unreachable` | 게이트웨이에 닿지 않습니다. 같은 LAN에 있는지, 방화벽이 이 기기를 허용하는지 확인합니다 |
 | `openrouter 402` | OpenRouter 크레딧이 부족합니다 |
 | `patch check failed` | 앱 폴더를 고칠 권한이 없을 수 있습니다. 터미널과 Bun에 "앱 관리" 권한을 줍니다 |
-| `updated 0.1.0 to v0.2.0 on spotify quit` | 자동 업데이트가 끝났습니다. Spotify를 켜면 새 버전이 로드됩니다 |
+| `update check on spotify quit: v0.2.1 is up to date` | 확인했고 이미 최신입니다 |
+| `updated 0.2.0 to v0.2.1 on spotify quit` | 자동 업데이트가 끝났습니다. Spotify를 켜면 새 버전이 로드됩니다 |
 | `update to vX.Y.Z skipped on ...` | 뒤에 붙은 이유 때문에 건너뛰었습니다. [자동 업데이트](#자동-업데이트)를 봅니다 |
 | `update check failed` | GitHub에 닿지 않았거나 API 한도에 걸렸습니다. 다음 확인 때 다시 시도합니다 |
 

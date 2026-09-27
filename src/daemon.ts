@@ -10,6 +10,7 @@ const MAX_LINE_LENGTH = 500;
 const WATCH_INTERVAL_MS = 30_000;
 const SPOTIFY_POLL_MS = 5_000;
 const UPDATE_MIN_INTERVAL_MS = 10 * 60_000;
+const SPOTIFY_EVENT_MIN_INTERVAL_MS = 60_000;
 const UPDATE_PERIOD_MS = 6 * 60 * 60_000;
 
 const CORS = {
@@ -104,13 +105,16 @@ async function ensurePatched() {
 let lastUpdateCheck = 0;
 let updating = false;
 
-async function checkForUpdate(reason: string) {
-  if (DEV || !AUTO_UPDATE || updating || Date.now() - lastUpdateCheck < UPDATE_MIN_INTERVAL_MS) return;
+async function checkForUpdate(reason: string, minIntervalMs = UPDATE_MIN_INTERVAL_MS) {
+  if (DEV || !AUTO_UPDATE || updating || Date.now() - lastUpdateCheck < minIntervalMs) return;
   lastUpdateCheck = Date.now();
   updating = true;
   try {
     const [current, latest] = await Promise.all([currentVersion(), latestRelease()]);
-    if (!latest || !isNewer(latest, current)) return;
+    if (!latest || !isNewer(latest, current)) {
+      log(`update check on ${reason}: v${current} is up to date`);
+      return;
+    }
     const result = await applyUpdate(latest);
     if (result.status === "skipped") {
       log(`update to ${latest} skipped on ${reason}: ${result.reason}`);
@@ -131,7 +135,7 @@ async function watchSpotify() {
   const running = await isSpotifyRunning();
   if (running === spotifyRunning) return;
   spotifyRunning = running;
-  await checkForUpdate(running ? "spotify start" : "spotify quit");
+  await checkForUpdate(running ? "spotify start" : "spotify quit", SPOTIFY_EVENT_MIN_INTERVAL_MS);
 }
 
 await ensurePatched();
