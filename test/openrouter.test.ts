@@ -103,7 +103,7 @@ test("aborting stops the request", async () => {
     return completion(ANSWER);
   };
   const controller = new AbortController();
-  const pending = provider().translate("ko", [{ i: 0, text: "x" }], controller.signal);
+  const pending = provider().translate("ko", [{ i: 0, text: "x" }], { signal: controller.signal });
   setTimeout(() => controller.abort(), 50);
   await expect(pending).rejects.toThrow();
   expect(requests).toHaveLength(1);

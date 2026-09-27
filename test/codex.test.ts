@@ -82,6 +82,7 @@ test("sends the request shape the gateway requires and joins streamed deltas", a
   expect((body.instructions as string).length).toBeGreaterThan(0);
   expect(body.reasoning).toEqual({ effort: "low" });
   expect(body.service_tier).toBe("priority");
+  expect(JSON.parse((body.input as { content: string }[])[0].content)).not.toHaveProperty("retranslate");
   expect(body).not.toHaveProperty("temperature");
   expect(body).not.toHaveProperty("max_output_tokens");
   expect(body).not.toHaveProperty("previous_response_id");
@@ -173,4 +174,10 @@ test("CODEX_SERVICE_TIER accepts priority and default only", () => {
   expect(() => providerFromEnv({ CODEX_SERVICE_TIER: "default" })).not.toThrow();
   expect(() => providerFromEnv({ CODEX_SERVICE_TIER: "priority" })).not.toThrow();
   expect(() => providerFromEnv({ CODEX_SERVICE_TIER: "fast" })).toThrow("CODEX_SERVICE_TIER");
+});
+
+test("focus is sent as a retranslate list", async () => {
+  handler = () => sse(streamOf(ANSWER));
+  await provider().translate("ko", [{ i: 0, text: "x" }, { i: 2, text: "y" }], { focus: [2] });
+  expect(JSON.parse((requests[0].input as { content: string }[])[0].content).retranslate).toEqual([2]);
 });
