@@ -5,7 +5,7 @@
 Spotify 데스크톱 앱의 가사 화면에서 원문 줄마다 LLM 번역을 한 줄씩 붙여 보여 줍니다.<br>
 Spicetify 없이 동작하고, Spotify가 업데이트되어 패치가 풀리면 알아서 다시 적용합니다.
 
-[설치](#설치) · [사용법](#사용법) · [번역기 설정](#번역기-설정) · [자동 업데이트](#자동-업데이트) · [문제 해결](#문제-해결) · [최신 릴리스](../../releases/latest)
+[설치](#설치) · [사용법](#사용법) · [번역기 설정](#번역기-설정) · [자동 업데이트](#자동-업데이트) · [문제 해결](#문제-해결) · [제거](#제거) · [최신 릴리스](../../releases/latest)
 
 <br>
 
@@ -25,6 +25,45 @@ Spicetify 없이 동작하고, Spotify가 업데이트되어 패치가 풀리면
 
 ## 설치
 
+### 에이전트로 설치
+
+Claude Code, Codex CLI처럼 터미널 명령을 실행할 수 있는 코딩 에이전트에 아래 프롬프트를 그대로 붙여 넣습니다. 요구 사항 확인부터 데몬 등록과 패치 확인까지 에이전트가 진행합니다. API 키는 에이전트에게 주지 않고, 마지막에 Spotify 설정 화면에서 직접 넣습니다.
+
+```text
+이 Mac에 Spotify Lyrics Translator를 설치해 주세요.
+Spotify 데스크톱 가사 화면에 LLM 번역을 줄마다 붙여 주는 도구입니다.
+
+꼭 지킬 것
+- API 키를 대화로 받지 말고, .env 내용을 읽거나 출력하지 마세요.
+- Spotify 종료와 시스템 설정 변경은 사용자에게 맡기세요.
+
+순서
+1. 다음이 모두 있는지 확인하고, 없는 것이 있으면 멈추고 알려 주세요.
+   macOS, /Applications/Spotify.app, git, zip, unzip
+2. 다음 파일이 있으면 이미 설치된 상태입니다. 멈추고 어떻게 할지 물어보세요.
+   ~/Library/LaunchAgents/local.spotify-lyrics-translator.plist
+3. bun이 없으면 사용자에게 물어본 뒤 https://bun.sh 의 공식 방법으로 설치하세요.
+4. https://api.github.com/repositories/1389677500 응답의 clone_url을
+   ~/spotify-lyrics-translator 로 clone하세요.
+   폴더가 이미 있으면 멈추고 물어보세요.
+5. 그 폴더에서 실행하세요.
+   cp .env.example .env
+   chmod 600 .env
+   bun run install-agent
+6. 최대 1분 동안 bun run status로 patchedHash가 null이 아닌지 확인하세요.
+   계속 null이면 아래 로그의 끝부분을 읽으세요.
+   bun run logs는 끝나지 않으니 쓰지 마세요.
+   "$HOME/Library/Application Support/spotify-lyrics-translator/daemon.log"
+   patch check failed가 보이면 시스템 설정의 개인정보 보호 및 보안에서
+   앱 관리 권한을 터미널과 Bun에 켜 달라고 안내하세요.
+   켠 뒤에 bun run restart-agent를 실행하고 다시 확인하세요.
+7. 끝나면 사용자에게 다음을 안내하세요.
+   - Spotify를 완전히 종료했다가 다시 켭니다.
+   - 설정 화면 맨 위 "가사 번역"에 번역기, API URL, API 키를 넣습니다.
+   - 연결 테스트로 확인한 뒤 저장합니다.
+   - 데몬이 설치 폴더를 계속 쓰므로 폴더를 옮기거나 지우면 안 됩니다.
+```
+
 ### 요구 사항
 
 | 항목 | 확인한 버전 |
@@ -36,7 +75,7 @@ Spicetify 없이 동작하고, Spotify가 업데이트되어 패치가 풀리면
 
 패처가 `/Applications/Spotify.app` 안의 파일을 고치기 때문에, 명령을 실행하는 터미널 앱에 macOS의 "앱 관리" 권한이 있어야 합니다. 시스템 설정의 개인정보 보호 및 보안에서 켤 수 있습니다.
 
-### 순서
+### 직접 설치
 
 1. 저장소를 `git clone`으로 받고 그 폴더로 들어갑니다. 자동 업데이트는 clone한 폴더에서만 동작합니다.
 
@@ -311,6 +350,50 @@ curl https://gateway.example/health
 - Spotify가 가사 화면 구조(`data-testid="lyrics-line"`)나 가사 API 경로(`color-lyrics/v2`)를 바꾸면 번역이 붙지 않습니다. 이때도 Spotify 원래 가사 화면은 그대로 나옵니다.
 
 ## 제거
+
+### 에이전트로 제거
+
+설치할 때처럼 아래 프롬프트를 코딩 에이전트에 붙여 넣습니다. 파일을 지우기 전에 에이전트가 먼저 물어봅니다.
+
+```text
+이 Mac에 설치된 Spotify Lyrics Translator를 제거해 주세요.
+
+꼭 지킬 것
+- .env 내용을 읽거나 출력하지 마세요.
+- Spotify 종료와 시스템 설정 변경은 사용자에게 맡기세요.
+- 사용자가 허락하기 전에는 폴더를 지우지 마세요.
+
+순서
+1. 설치 폴더를 찾으세요. plist가 없으면 멈추고 알려 주세요.
+   plutil -extract WorkingDirectory raw \
+     ~/Library/LaunchAgents/local.spotify-lyrics-translator.plist
+2. 그 폴더에서 이 순서대로 실행하세요.
+   데몬을 먼저 멈추지 않으면 패치가 다시 들어갑니다.
+   bun run uninstall-agent
+   bun run restore
+   권한 오류가 나면 시스템 설정의 개인정보 보호 및 보안에서
+   앱 관리 권한을 터미널에 켜 달라고 안내하고, 켠 뒤 다시 실행하세요.
+3. 폴더가 없거나 bun을 쓸 수 없으면 2번 대신 다음을 하세요.
+   launchctl bootout gui/$(id -u)/local.spotify-lyrics-translator
+   rm ~/Library/LaunchAgents/local.spotify-lyrics-translator.plist
+   defaults read /Applications/Spotify.app/Contents/Info.plist \
+     CFBundleShortVersionString
+   그 버전과 같은 데이터 폴더의 xpui-<버전>.spa를 아래 경로로 복사하세요.
+   /Applications/Spotify.app/Contents/Resources/Apps/xpui.spa
+   같은 버전의 백업이 없으면 Spotify를 다시 설치하라고 안내하세요.
+4. 패치가 풀렸는지 확인하세요. bun run status의 patchedHash가 null이거나,
+   아래 명령이 아무것도 찾지 못하면 풀린 것입니다.
+   unzip -p /Applications/Spotify.app/Contents/Resources/Apps/xpui.spa \
+     index.html | grep data-lyrics-translator
+5. 패치가 풀린 것을 확인한 뒤에만 아래 두 폴더를 보여 주고
+   지워도 되는지 물어보세요.
+   - 설치 폴더: API 키가 든 .env가 있습니다.
+   - 데이터 폴더: 원본 백업, 번역 캐시, 로그가 있습니다.
+     "$HOME/Library/Application Support/spotify-lyrics-translator"
+6. Spotify를 완전히 종료했다가 다시 켜 달라고 안내하세요.
+```
+
+### 직접 제거
 
 ```bash
 bun run uninstall-agent
