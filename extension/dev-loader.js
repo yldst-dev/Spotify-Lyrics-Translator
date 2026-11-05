@@ -1,5 +1,6 @@
 (() => {
   const API = "http://127.0.0.1:47831";
+  const token = document.currentScript?.dataset.sltToken ?? "";
 
   const getSync = (path) => {
     const xhr = new XMLHttpRequest();
@@ -13,6 +14,7 @@
   try {
     loaded = getSync("/dev/version");
     const script = document.createElement("script");
+    script.dataset.sltToken = token;
     script.textContent = `${getSync("/dev/extension.js")}\n//# sourceURL=${API}/dev/extension.js`;
     document.head.append(script);
   } catch {}

@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterAll, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,7 +6,8 @@ import { join } from "node:path";
 
 const dir = mkdtempSync(join(tmpdir(), "slt-tr-"));
 process.env.SLT_DATA_DIR = dir;
-const { createTranslator, isTranslatable, needsRetranslation } = await import("../src/translator");
+const { classifyFailure, createTranslator, isTransient, isTranslatable, needsRetranslation, parseLines } = await import("../src/translator");
+const PROMPT_PREFIX = (await Bun.file(new URL("../src/translator.ts", import.meta.url)).text()).match(/PROMPT_VERSION = (\d+)/)![1] + ":";
 const asProvider = (translate: (lang: string, items: { i: number; text: string }[]) => Promise<{ i: number; text: string }[]>) => ({ id: "test", translate });
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -162,4 +164,81 @@ test("a failed second pass keeps the first results", async () => {
   const translate = createTranslator(provider, join(dir, "g.sqlite"));
   expect(await translate(TRACK, "ko", ["夜の駅で待ってる", "we run until the light"])).toEqual(["밤의 역에서 기다려", null]);
   expect(call).toBe(2);
+  await translate(TRACK, "ko", ["夜の駅で待ってる", "we run until the light"]);
+  expect(call).toBe(4);
+});
+
+test("an answer with no lines fails instead of caching an empty song", async () => {
+  const provider = mock(async () => [] as { i: number; text: string }[]);
+  const translate = createTranslator(asProvider(provider), join(dir, "empty.sqlite"));
+  await expect(translate(TRACK, "en", ["안녕하세요"])).rejects.toThrow("provider returned no lines");
+  await expect(translate(TRACK, "en", ["안녕하세요"])).rejects.toThrow("provider returned no lines");
+  expect(provider).toHaveBeenCalledTimes(4);
+});
+
+test("lines the provider skipped get a second pass in every language, then the answer is cached", async () => {
+  const provider = mock(async (_lang: string, items: { i: number; text: string }[], options?: { focus?: number[] }) =>
+    options?.focus ? [{ i: 1, text: "Good night" }] : [{ i: 0, text: "Hello" }],
+  );
+  const translate = createTranslator({ id: "skip", translate: provider }, join(dir, "skip.sqlite"));
+  expect(await translate(TRACK, "en", ["안녕", "잘 자"])).toEqual(["Hello", "Good night"]);
+  await translate(TRACK, "en", ["안녕", "잘 자"]);
+  expect(provider).toHaveBeenCalledTimes(2);
+});
+
+test("an empty entry counts as answered, so it is not asked again", async () => {
+  const provider = mock(async () => [{ i: 0, text: "" }]);
+  const translate = createTranslator({ id: "blank", translate: provider }, join(dir, "blank.sqlite"));
+  expect(await translate(TRACK, "en", ["hello there"])).toEqual([null]);
+  expect(provider).toHaveBeenCalledTimes(1);
+});
+
+test("rows from older prompt versions are removed on open", () => {
+  const path = join(dir, "stale.sqlite");
+  createTranslator(asProvider(async () => []), path);
+  const db = new Database(path);
+  const insert = db.query("INSERT INTO translations (key, lines, created) VALUES (?, '[]', 0)");
+  insert.run("1:mock:ko:x:y");
+  insert.run(`${PROMPT_PREFIX}codex:ko:x:y`);
+  db.close();
+  createTranslator(asProvider(async () => []), path);
+  const keys = new Database(path).query<{ key: string }, []>("SELECT key FROM translations").all().map(({ key }) => key);
+  expect(keys).toEqual([`${PROMPT_PREFIX}codex:ko:x:y`]);
+});
+
+test("long runs of m in a line do not make the vocalization check slow", () => {
+  const started = performance.now();
+  expect(needsRetranslation(`${"m".repeat(450)} baby`, "번역", "ko")).toBe(false);
+  expect(performance.now() - started).toBeLessThan(100);
+  expect(needsRetranslation("mmm hmm", undefined, "ko")).toBe(false);
+});
+
+test("failures are sorted into what the settings screen can explain", () => {
+  const cases: [unknown, string][] = [
+    [new Error("codex gateway 401: denied"), "rejected"],
+    [new Error("openai 403: denied"), "rejected"],
+    [new Error("Claude API 401: denied"), "rejected"],
+    [new Error("openrouter 402: {}"), "no_credit"],
+    [new Error("openai 404: no such model"), "not_found"],
+    [new Error("openai 429: slow down"), "rate_limited"],
+    [new Error("codex gateway unreachable: Error: Unable to connect"), "unreachable"],
+    [new DOMException("slow", "TimeoutError"), "timeout"],
+    [new Error("openai 500: boom"), "failed"],
+    [new Error("codex gateway 503: login expired on port 401"), "failed"],
+    ["not an error", "failed"],
+  ];
+  for (const [error, expected] of cases) expect(classifyFailure(error)).toBe(expected);
+});
+
+test("only transient failures are marked for another try", () => {
+  const failure = (work: () => unknown) => {
+    try {
+      work();
+    } catch (error) {
+      return error;
+    }
+  };
+  expect(isTransient(failure(() => parseLines("no json here")))).toBe(true);
+  expect(isTransient(new DOMException("slow", "TimeoutError"))).toBe(true);
+  expect(isTransient(new Error("codex gateway 401"))).toBe(false);
 });

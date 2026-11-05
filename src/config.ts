@@ -8,6 +8,7 @@ export const PORT = Number(process.env.SLT_PORT ?? 47831);
 export const SPOTIFY_ORIGIN = "https://xpui.app.spotify.com";
 export const EXTENSION = join(ROOT, "extension/lyrics-translator.js");
 export const DEV_LOADER = join(ROOT, "extension/dev-loader.js");
+export const ENV_FILE = process.env.SLT_ENV_FILE ?? join(ROOT, ".env");
 export const DEV = process.env.SLT_DEV === "1";
 export const AUTO_UPDATE = process.env.SLT_AUTO_UPDATE !== "0";
 export const LAUNCHD_LABEL = "local.spotify-lyrics-translator";

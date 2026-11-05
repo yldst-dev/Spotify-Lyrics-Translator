@@ -1,9 +1,11 @@
 import { $ } from "bun";
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyUpdate, currentVersion, isNewer, latestRelease } from "../src/updater";
+import { applyUpdate as realApplyUpdate, currentVersion, daemonBoots, isNewer, latestRelease } from "../src/updater";
+
+const applyUpdate = (tag: string, options: Parameters<typeof realApplyUpdate>[1]) => realApplyUpdate(tag, { verify: async () => true, ...options });
 
 const roots: string[] = [];
 afterAll(() => Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -88,4 +90,59 @@ test("rejects tags that are not vX.Y.Z and folders that are not git checkouts", 
   const plain = await mkdtemp(join(tmpdir(), "slt-plain-"));
   roots.push(plain);
   expect(await applyUpdate("v0.2.0", { root: plain, remote: upstream })).toEqual({ status: "skipped", reason: "not a git checkout" });
+});
+
+test("a release that fails the startup check is rolled back", async () => {
+  const before = (await git(clone, ["rev-parse", "HEAD"]).text()).trim();
+  expect(await applyUpdate("v0.2.0", { root: clone, remote: upstream, verify: async () => false })).toEqual({
+    status: "skipped",
+    reason: "release failed its startup check and was rolled back",
+  });
+  expect((await git(clone, ["rev-parse", "HEAD"]).text()).trim()).toBe(before);
+  expect(await currentVersion(clone)).toBe("0.1.0");
+  expect((await git(clone, ["status", "--porcelain"]).text()).trim()).toBe("");
+});
+
+test("daemonBoots accepts this checkout and rejects a daemon that crashes", async () => {
+  expect(await daemonBoots()).toBe(true);
+  const root = await mkdtemp(join(tmpdir(), "slt-broken-"));
+  roots.push(root);
+  await mkdir(join(root, "src"));
+  await writeFile(join(root, "src/daemon.ts"), 'throw new Error("broken release");');
+  expect(await daemonBoots(root)).toBe(false);
+}, 30_000);
+
+async function signingKey(name: string) {
+  const dir = await mkdtemp(join(tmpdir(), "slt-key-"));
+  roots.push(dir);
+  const path = join(dir, name);
+  expect(Bun.spawnSync(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", name, "-f", path]).exitCode).toBe(0);
+  return { path, publicKey: (await Bun.file(`${path}.pub`).text()).trim() };
+}
+
+async function requireSignature(publicKey: string) {
+  await writeFile(join(clone, "release-signers"), `release namespaces="git" ${publicKey}\n`);
+  await git(clone, ["add", "release-signers"]);
+  await git(clone, ["commit", "-q", "-m", "signers"]);
+  await git(clone, ["push", "-q", upstream, "HEAD:refs/heads/signed"]);
+  await git(upstream, ["checkout", "-q", "signed"]);
+  await commitVersion(upstream, "0.4.0");
+}
+
+const signTag = (tag: string, key: string) =>
+  git(upstream, ["-c", "gpg.format=ssh", "-c", `user.signingkey=${key}`, "tag", "-s", tag, "-m", tag]);
+
+test("once signers are registered only a tag signed by them updates", async () => {
+  const owner = await signingKey("owner");
+  const stranger = await signingKey("stranger");
+  await requireSignature(owner.publicKey);
+
+  await git(upstream, ["tag", "-a", "v0.4.0", "-m", "unsigned"]);
+  expect(await applyUpdate("v0.4.0", { root: clone, remote: upstream })).toEqual({ status: "skipped", reason: "release signature is not trusted" });
+
+  await signTag("v0.4.1", stranger.path);
+  expect(await applyUpdate("v0.4.1", { root: clone, remote: upstream })).toEqual({ status: "skipped", reason: "release signature is not trusted" });
+
+  await signTag("v0.4.2", owner.path);
+  expect(await applyUpdate("v0.4.2", { root: clone, remote: upstream })).toMatchObject({ status: "updated", to: "v0.4.2" });
 });

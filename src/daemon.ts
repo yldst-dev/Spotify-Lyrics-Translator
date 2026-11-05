@@ -1,7 +1,9 @@
-import { stat } from "node:fs/promises";
-import { AUTO_UPDATE, DEV, DEV_LOADER, EXTENSION, PORT, SPOTIFY_ORIGIN } from "./config";
-import { hashFile, spotify } from "./patcher";
-import { createTranslator, isSupportedLanguage, providerFromEnv } from "./translator";
+import { timingSafeEqual } from "node:crypto";
+import { chmod, stat } from "node:fs/promises";
+import { AUTO_UPDATE, DATA_DIR, DEV, DEV_LOADER, ENV_FILE, EXTENSION, PORT, SPOTIFY_ORIGIN } from "./config";
+import { hashFile, loadToken, spotify } from "./patcher";
+import { activeUsesPlainHttp, readSettings, resolveSettings, runConnectionTest, saveSettings } from "./settings";
+import { classifyFailure, createTranslator, isSupportedLanguage, isTransient, providerFromEnv } from "./translator";
 import { applyUpdate, currentVersion, isNewer, isSpotifyRunning, latestRelease } from "./updater";
 
 const TRACK_ID = /^[A-Za-z0-9]{22}$/;
@@ -15,7 +17,7 @@ const UPDATE_PERIOD_MS = 6 * 60 * 60_000;
 
 const CORS = {
   "access-control-allow-origin": SPOTIFY_ORIGIN,
-  "access-control-allow-headers": "content-type",
+  "access-control-allow-headers": "content-type, x-slt-token",
   "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-private-network": "true",
   vary: "origin",
@@ -24,8 +26,21 @@ const CORS = {
 const log = (...args: unknown[]) => console.log(new Date().toISOString(), ...args);
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: CORS });
 
-const provider = providerFromEnv();
-const translate = createTranslator(provider);
+await chmod(ENV_FILE, 0o600).catch(() => {});
+const TOKEN = await loadToken(DATA_DIR);
+
+let provider = providerFromEnv();
+let translate = createTranslator(provider);
+
+const warnIfPlainHttp = () => {
+  if (activeUsesPlainHttp(process.env)) log("warning: the API URL uses plain http, so the API key and lyrics are not encrypted");
+};
+
+const hasToken = (req: Request) => {
+  const given = Buffer.from(req.headers.get("x-slt-token") ?? "");
+  const expected = Buffer.from(TOKEN);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+};
 
 function parseTranslateBody(body: unknown) {
   if (typeof body !== "object" || body === null) return null;
@@ -52,7 +67,35 @@ async function handleTranslate(req: Request) {
       return json({ error: "cancelled" }, 499);
     }
     log("translate failed", input.trackId, String(error));
-    return json({ error: "translation failed" }, 502);
+    return json({ error: "translation failed", retry: isTransient(error) }, 502);
+  }
+}
+
+async function handleSettings(req: Request) {
+  if (req.method === "POST") {
+    const result = await saveSettings(await req.json().catch(() => null), process.env, ENV_FILE);
+    if (result) return json({ error: result }, 400);
+    provider = providerFromEnv();
+    translate = createTranslator(provider);
+    log("settings updated", provider.id);
+    warnIfPlainHttp();
+  }
+  return json(readSettings(process.env));
+}
+
+async function handleConnectionTest(req: Request) {
+  const updates = resolveSettings(await req.json().catch(() => null), process.env);
+  if (typeof updates === "string") return json({ error: updates }, 400);
+  const tester = providerFromEnv({ ...process.env, ...updates });
+  const started = performance.now();
+  try {
+    await runConnectionTest(tester, req.signal);
+    const ms = Math.round(performance.now() - started);
+    log("connection test passed", tester.id, `${ms}ms`);
+    return json({ ok: true, provider: tester.id, ms });
+  } catch (error) {
+    log("connection test failed", tester.id, String(error));
+    return json({ ok: false, failure: classifyFailure(error) });
   }
 }
 
@@ -74,8 +117,11 @@ Bun.serve({
     if (req.headers.get("origin") !== SPOTIFY_ORIGIN) return new Response("forbidden", { status: 403 });
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const { pathname } = new URL(req.url);
-    if (req.method === "POST" && pathname === "/translate") return handleTranslate(req);
     if (DEV && pathname.startsWith("/dev/")) return handleDev(req, pathname);
+    if (!hasToken(req)) return json({ error: "unauthorized" }, 401);
+    if (req.method === "POST" && pathname === "/translate") return handleTranslate(req);
+    if ((req.method === "GET" || req.method === "POST") && pathname === "/settings") return handleSettings(req);
+    if (req.method === "POST" && pathname === "/settings/test") return handleConnectionTest(req);
     return new Response("not found", { status: 404, headers: CORS });
   },
 });
@@ -85,7 +131,7 @@ let lastSeen = "";
 async function ensurePatched() {
   const script = DEV ? DEV_LOADER : EXTENSION;
   try {
-    const hash = await hashFile(script);
+    const hash = await hashFile(script, TOKEN);
     const signature = async () => {
       const spa = await stat(spotify.spa);
       return `${spa.mtimeMs}:${spa.size}:${hash}`;
@@ -138,6 +184,7 @@ async function watchSpotify() {
   await checkForUpdate(running ? "spotify start" : "spotify quit", SPOTIFY_EVENT_MIN_INTERVAL_MS);
 }
 
+warnIfPlainHttp();
 await ensurePatched();
 setInterval(ensurePatched, WATCH_INTERVAL_MS);
 setInterval(watchSpotify, SPOTIFY_POLL_MS);
