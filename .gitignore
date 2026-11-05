@@ -1,2 +1,4 @@
 node_modules/
 .env
+.env.tmp
+.DS_Store

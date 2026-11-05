@@ -1,9 +1,14 @@
 import { $ } from "bun";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ROOT } from "./config";
+import { ROOT, SPOTIFY_ORIGIN } from "./config";
+import { loadToken } from "./patcher";
 
 export const UPDATE_REPO = process.env.SLT_UPDATE_REPO ?? "yldst-dev/Spotify-Lyrics-Translator";
 const VERSION_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+const SIGNERS_FILE = "release-signers";
+const BOOT_TIMEOUT_MS = 15_000;
 
 export type UpdateResult = { status: "updated"; from: string; to: string } | { status: "skipped"; reason: string };
 
@@ -36,9 +41,57 @@ export async function latestRelease(repo = UPDATE_REPO, fetchImpl: typeof fetch 
   return release.tag_name;
 }
 
+const freePort = () => {
+  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const { port } = probe;
+  probe.stop(true);
+  return port as number;
+};
+
+export async function daemonBoots(root = ROOT) {
+  const dataDir = await mkdtemp(join(tmpdir(), "slt-boot-"));
+  const port = freePort();
+  const token = await loadToken(dataDir);
+  const child = Bun.spawn([process.execPath, join(root, "src/daemon.ts")], {
+    cwd: dataDir,
+    env: {
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
+      SLT_DATA_DIR: dataDir,
+      SLT_ENV_FILE: join(dataDir, ".env"),
+      SLT_PORT: String(port),
+      SLT_TRANSLATOR: "mock",
+      SLT_AUTO_UPDATE: "0",
+      SPOTIFY_APP: join(dataDir, "none.app"),
+    },
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  try {
+    const deadline = Date.now() + BOOT_TIMEOUT_MS;
+    while (Date.now() < deadline && child.exitCode === null) {
+      const res = await fetch(`http://127.0.0.1:${port}/translate`, {
+        method: "POST",
+        headers: { origin: SPOTIFY_ORIGIN, "x-slt-token": token, "content-type": "application/json" },
+        body: JSON.stringify({ trackId: "0".repeat(22), lang: "ko", lines: ["boot check"] }),
+      }).catch(() => null);
+      if (res?.ok) return true;
+      await Bun.sleep(200);
+    }
+    return false;
+  } finally {
+    child.kill(9);
+    await rm(dataDir, { recursive: true, force: true });
+  }
+}
+
 export async function applyUpdate(
   tag: string,
-  { root = ROOT, remote = `https://github.com/${UPDATE_REPO}.git` }: { root?: string; remote?: string } = {},
+  {
+    root = ROOT,
+    remote = `https://github.com/${UPDATE_REPO}.git`,
+    verify = daemonBoots,
+  }: { root?: string; remote?: string; verify?: (root: string) => Promise<boolean> } = {},
 ): Promise<UpdateResult> {
   const skip = (reason: string): UpdateResult => ({ status: "skipped", reason });
   if (!VERSION_TAG.test(tag)) return skip(`invalid tag ${tag}`);
@@ -53,9 +106,24 @@ export async function applyUpdate(
   if (from === target) return skip("already at release");
   if ((await git(["merge-base", "--is-ancestor", "HEAD", target]).nothrow()).exitCode !== 0) return skip("local commits are not in the release");
 
+  const signers = join(root, SIGNERS_FILE);
+  if (await Bun.file(signers).exists()) {
+    const body = await git(["cat-file", "tag", tag]).nothrow();
+    const trusted =
+      body.exitCode === 0 &&
+      body.text().includes("BEGIN SSH SIGNATURE") &&
+      (await git(["-c", `gpg.ssh.allowedSignersFile=${signers}`, "verify-tag", tag]).nothrow()).exitCode === 0;
+    if (!trusted) return skip("release signature is not trusted");
+  }
+
   const branch = (await git(["symbolic-ref", "--short", "-q", "HEAD"]).nothrow().text()).trim();
   if (branch) await git(["merge", "--ff-only", "--quiet", target]);
   else await git(["checkout", "--quiet", "--detach", target]);
+
+  if (!(await verify(root))) {
+    await git(["reset", "--keep", from]);
+    return skip("release failed its startup check and was rolled back");
+  }
   return { status: "updated", from: from.slice(0, 7), to: tag };
 }
 

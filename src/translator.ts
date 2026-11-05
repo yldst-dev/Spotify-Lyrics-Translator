@@ -54,6 +54,20 @@ type SseEvent = { type?: string; [key: string]: unknown };
 
 class RetryableError extends Error {}
 
+export const isTransient = (error: unknown) =>
+  error instanceof RetryableError || (error instanceof DOMException && error.name === "TimeoutError");
+
+export function classifyFailure(error: unknown) {
+  if (error instanceof DOMException && error.name === "TimeoutError") return "timeout";
+  const message = error instanceof Error ? error.message : "";
+  const status = Number(message.match(/^[^:]*?\b([45]\d\d):/)?.[1]);
+  if (status === 401 || status === 403) return "rejected";
+  if (status === 402) return "no_credit";
+  if (status === 404) return "not_found";
+  if (status === 429) return "rate_limited";
+  return message.includes("unreachable") ? "unreachable" : "failed";
+}
+
 const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
 
 const requestSignal = (signal?: AbortSignal) =>
@@ -75,9 +89,9 @@ const userContent = (lang: string, items: Item[], focus?: number[]) =>
 const HANGUL = /\p{Script=Hangul}/u;
 const KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const HAN = /\p{Script=Han}/u;
-const VOCALIZATION = /^(?:o+h+|a+h+|la|na|ye+a+h?|hey|wo+|whoa|uh|m+|hmm|ha|da|doo|ya|yo)+$/;
+const VOCALIZATION = /^(?:o+h+|a+h+|la|na|ye+a+h?|hey|wo+|whoa|uh|m|hmm|ha|da|doo|ya|yo)+$/;
 
-const lettersOf = (text: string) => text.match(/\p{L}/gu) ?? [];
+const lettersOf = (text: string): string[] => text.match(/\p{L}/gu) ?? [];
 
 const isTargetScript = (char: string, lang: string): boolean | null => {
   if (lang === "ko") return HANGUL.test(char);
@@ -157,21 +171,41 @@ async function withRetry<T>(work: () => Promise<T>, delayMs: number, signal?: Ab
   }
 }
 
+type Env = Record<string, string | undefined>;
+
+export const CONNECTIONS: Record<string, { label: string; urlVar: string; keyVar: string; defaultUrl: string }> = {
+  codex: { label: "Codex Gateway", urlVar: "CODEX_GATEWAY_BASE_URL", keyVar: "CODEX_GATEWAY_API_KEY", defaultUrl: "" },
+  openrouter: { label: "OpenRouter", urlVar: "OPENROUTER_BASE_URL", keyVar: "OPENROUTER_API_KEY", defaultUrl: "https://openrouter.ai/api/v1" },
+  claude: { label: "Claude", urlVar: "ANTHROPIC_BASE_URL", keyVar: "ANTHROPIC_API_KEY", defaultUrl: "https://api.anthropic.com" },
+  openai: { label: "OpenAI (ChatGPT API)", urlVar: "OPENAI_BASE_URL", keyVar: "OPENAI_API_KEY", defaultUrl: "https://api.openai.com/v1" },
+};
+
+export const translatorId = (env: Env) => env.SLT_TRANSLATOR ?? "codex";
+
+const connectionFrom = (id: string, env: Env) => {
+  const { urlVar, keyVar, defaultUrl } = CONNECTIONS[id];
+  return { baseUrl: env[urlVar] || defaultUrl, apiKey: env[keyVar] };
+};
+
+const STREAM_FAILURES = new Set(["response.failed", "response.incomplete", "response.refusal.done", "error"]);
+
 export const CODEX_SERVICE_TIERS = ["priority", "default"] as const;
 export type CodexServiceTier = (typeof CODEX_SERVICE_TIERS)[number];
 
-export function createCodexProvider(options: {
-  baseUrl: string;
-  apiKey?: string;
-  model: string;
-  effort: string;
-  serviceTier?: CodexServiceTier;
-  retryDelayMs?: number;
-}): Provider {
-  const { baseUrl, apiKey, model, effort, serviceTier = "priority", retryDelayMs = 2000 } = options;
+type ConnectionOptions = { baseUrl: string; apiKey?: string; model: string; effort: string; retryDelayMs?: number };
+
+function createResponsesProvider(
+  name: string,
+  label: string,
+  { baseUrl, apiKey, model, effort, retryDelayMs = 2000 }: ConnectionOptions,
+  body: Record<string, unknown>,
+  isRetryableStatus: (status: number) => boolean,
+): Provider {
+  const { urlVar, keyVar } = CONNECTIONS[name];
 
   async function once(lang: string, items: Item[], { signal, focus }: TranslateOptions) {
-    if (!apiKey) throw new Error("CODEX_GATEWAY_API_KEY is not set");
+    if (!baseUrl) throw new Error(`${urlVar} is not set`);
+    if (!apiKey) throw new Error(`${keyVar} is not set`);
     let res: Response;
     try {
       res = await fetch(`${baseUrl.replace(/\/+$/, "")}/responses`, {
@@ -184,17 +218,17 @@ export function createCodexProvider(options: {
           store: false,
           stream: true,
           reasoning: { effort },
-          ...(serviceTier === "priority" ? { service_tier: "priority" } : {}),
+          ...body,
         }),
         signal: requestSignal(signal),
       });
     } catch (error) {
       if (isAbort(error)) throw error;
-      throw new RetryableError(`gateway unreachable: ${String(error)}`);
+      throw new RetryableError(`${label} unreachable: ${String(error)}`);
     }
     if (!res.ok || !res.body) {
-      const detail = `codex gateway ${res.status}: ${(await res.text()).slice(0, 300)}`;
-      throw res.status === 502 ? new RetryableError(detail) : new Error(detail);
+      const detail = `${label} ${res.status}: ${(await res.text()).slice(0, 300)}`;
+      throw isRetryableStatus(res.status) ? new RetryableError(detail) : new Error(detail);
     }
 
     let deltas = "";
@@ -202,16 +236,25 @@ export function createCodexProvider(options: {
     for await (const event of readSse(res.body)) {
       if (event.type === "response.output_text.delta" && typeof event.delta === "string") deltas += event.delta;
       else if (event.type === "response.output_text.done" && typeof event.text === "string") done = event.text;
-      else if (event.type === "response.failed" || event.type === "error")
-        throw new Error(`codex ${event.type}: ${JSON.stringify(event).slice(0, 300)}`);
+      else if (STREAM_FAILURES.has(String(event.type))) throw new Error(`${label} ${event.type}: ${JSON.stringify(event).slice(0, 300)}`);
     }
     return parseLines(done ?? deltas);
   }
 
   return {
-    id: `codex:${model}:${effort}`,
+    id: `${name}:${model}:${effort}`,
     translate: (lang, items, options = {}) => withRetry(() => once(lang, items, options), retryDelayMs, options.signal),
   };
+}
+
+export function createCodexProvider({ serviceTier = "priority", ...options }: ConnectionOptions & { serviceTier?: CodexServiceTier }) {
+  const tier = serviceTier === "priority" ? { service_tier: "priority" } : {};
+  return createResponsesProvider("codex", "codex gateway", options, tier, (status) => status === 502);
+}
+
+export function createOpenAIProvider(options: ConnectionOptions) {
+  const format = { type: "json_schema", name: "lyrics_translation", strict: true, schema: SCHEMA };
+  return createResponsesProvider("openai", "openai", options, { text: { format } }, (status) => status === 429 || status >= 500);
 }
 
 export function createOpenRouterProvider(options: {
@@ -275,13 +318,20 @@ export function createOpenRouterProvider(options: {
   };
 }
 
-export function createClaudeProvider(options: { apiKey?: string; model: string; effort: string }): Provider {
-  const { apiKey, model, effort } = options;
-  return {
-    id: `claude:${model}:${effort}`,
-    async translate(lang, items, { signal, focus } = {}) {
-      if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+export function createClaudeProvider(options: {
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+  effort: string;
+  retryDelayMs?: number;
+}): Provider {
+  const { baseUrl, apiKey, model, effort, retryDelayMs = 2000 } = options;
+
+  async function once(lang: string, items: Item[], { signal, focus }: TranslateOptions) {
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl.replace(/\/+$/, "")}/v1/messages`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -299,11 +349,22 @@ export function createClaudeProvider(options: { apiKey?: string; model: string; 
         }),
         signal: requestSignal(signal),
       });
-      if (!res.ok) throw new Error(`Claude API ${res.status}: ${(await res.text()).slice(0, 300)}`);
-      const message = (await res.json()) as { stop_reason: string; content: { type: string; text?: string }[] };
-      if (message.stop_reason !== "end_turn") throw new Error(`Claude stopped with ${message.stop_reason}`);
-      return parseLines(message.content.find((block) => block.type === "text")?.text ?? "");
-    },
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      throw new RetryableError(`anthropic unreachable: ${String(error)}`);
+    }
+    if (!res.ok) {
+      const detail = `Claude API ${res.status}: ${(await res.text()).slice(0, 300)}`;
+      throw res.status === 429 || res.status >= 500 ? new RetryableError(detail) : new Error(detail);
+    }
+    const message = (await res.json()) as { stop_reason: string; content: { type: string; text?: string }[] };
+    if (message.stop_reason !== "end_turn") throw new Error(`Claude stopped with ${message.stop_reason}`);
+    return parseLines(message.content.find((block) => block.type === "text")?.text ?? "");
+  }
+
+  return {
+    id: `claude:${model}:${effort}`,
+    translate: (lang, items, options = {}) => withRetry(() => once(lang, items, options), retryDelayMs, options.signal),
   };
 }
 
@@ -313,16 +374,15 @@ export const mockProvider: Provider = {
     items.filter(({ i }) => !focus || focus.includes(i)).map(({ i }) => ({ i, text: `〔${i + 1}〕` })),
 };
 
-export function providerFromEnv(env = process.env): Provider {
+export function providerFromEnv(env: Env = process.env): Provider {
   const effort = env.SLT_EFFORT ?? "medium";
-  switch (env.SLT_TRANSLATOR ?? "codex") {
+  switch (translatorId(env)) {
     case "codex": {
       const serviceTier = env.CODEX_SERVICE_TIER ?? "priority";
       if (!CODEX_SERVICE_TIERS.includes(serviceTier as CodexServiceTier))
         throw new Error(`CODEX_SERVICE_TIER must be one of ${CODEX_SERVICE_TIERS.join(", ")}: ${serviceTier}`);
       return createCodexProvider({
-        baseUrl: env.CODEX_GATEWAY_BASE_URL ?? "http://192.168.0.9:8080/v1",
-        apiKey: env.CODEX_GATEWAY_API_KEY,
+        ...connectionFrom("codex", env),
         model: env.CODEX_MODEL ?? "gpt-6-astra",
         effort,
         serviceTier: serviceTier as CodexServiceTier,
@@ -330,13 +390,14 @@ export function providerFromEnv(env = process.env): Provider {
     }
     case "openrouter":
       return createOpenRouterProvider({
-        baseUrl: env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
-        apiKey: env.OPENROUTER_API_KEY,
+        ...connectionFrom("openrouter", env),
         model: env.OPENROUTER_MODEL ?? "openai/gpt-6-luna",
         effort,
       });
     case "claude":
-      return createClaudeProvider({ apiKey: env.ANTHROPIC_API_KEY, model: env.SLT_MODEL ?? "claude-opus-5", effort });
+      return createClaudeProvider({ ...connectionFrom("claude", env), model: env.SLT_MODEL ?? "claude-opus-5-5", effort });
+    case "openai":
+      return createOpenAIProvider({ ...connectionFrom("openai", env), model: env.OPENAI_MODEL ?? "gpt-6-luna", effort });
     case "mock":
       return mockProvider;
     default:
@@ -348,6 +409,7 @@ export function createTranslator(provider: Provider = providerFromEnv(), dbPath 
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new Database(dbPath, { create: true });
   db.run("CREATE TABLE IF NOT EXISTS translations (key TEXT PRIMARY KEY, lines TEXT NOT NULL, created INTEGER NOT NULL)");
+  db.run("DELETE FROM translations WHERE key NOT LIKE ?", [`${PROMPT_VERSION}:%`]);
   const read = db.query<{ lines: string }, [string]>("SELECT lines FROM translations WHERE key = ?");
   const write = db.query("INSERT OR REPLACE INTO translations (key, lines, created) VALUES (?, ?, ?)");
   const jobs = new Map<string, { promise: Promise<(string | null)[]>; controller: AbortController; waiters: number }>();
@@ -359,31 +421,37 @@ export function createTranslator(provider: Provider = providerFromEnv(), dbPath 
     const items = lines.map((text, i) => ({ i, text: normalize(text) })).filter(({ text }) => isTranslatable(text, lang));
     const sources = new Map(items.map(({ i, text }) => [i, text]));
     const byIndex = new Map<number, string>();
+    const answered = new Set<number>();
     const accept = (entries: Item[], focus?: Set<number>) => {
       for (const { i, text } of entries) {
         const source = sources.get(i);
-        if (source === undefined || (focus && !focus.has(i)) || !text.trim()) continue;
+        if (source === undefined || (focus && !focus.has(i))) continue;
+        answered.add(i);
+        if (!text.trim()) continue;
         if (focus && needsRetranslation(source, text, lang) && byIndex.has(i)) continue;
         byIndex.set(i, text.trim());
       }
     };
 
+    let complete = true;
     if (items.length) {
       accept(await provider.translate(lang, items, { signal }));
-      const focus = items.filter(({ i, text }) => needsRetranslation(text, byIndex.get(i), lang)).map(({ i }) => i);
+      const focus = items.filter(({ i, text }) => !answered.has(i) || needsRetranslation(text, byIndex.get(i), lang)).map(({ i }) => i);
       if (focus.length) {
         try {
           accept(await provider.translate(lang, items, { signal, focus }), new Set(focus));
         } catch (error) {
           if (signal.aborted) throw error;
+          complete = false;
         }
       }
+      if (!answered.size) throw new RetryableError("provider returned no lines");
     }
     const result = lines.map((_, i) => {
       const translation = byIndex.get(i);
       return translation && translation !== sources.get(i) ? translation : null;
     });
-    write.run(key, JSON.stringify(result), Date.now());
+    if (complete) write.run(key, JSON.stringify(result), Date.now());
     return result;
   }
 

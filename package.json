@@ -1,6 +1,6 @@
 {
   "name": "spotify-lyrics-translator",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "uninstall-agent": "bun src/cli.ts uninstall",
     "logs": "bun src/cli.ts logs",
     "update": "bun src/cli.ts update",
+    "version": "bun src/cli.ts version",
     "status": "bun src/cli.ts status",
     "apply": "bun src/cli.ts apply",
     "restore": "bun src/cli.ts restore",

@@ -1,5 +1,6 @@
 import { $ } from "bun";
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { copyFile, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { APP, DATA_DIR } from "./config";
@@ -12,8 +13,18 @@ const ANCHOR = '<script defer="defer" src="/xpui-snapshot.js">';
 
 export type PatchState = { version: string; patchedHash: string | null };
 
-export const hashFile = async (path: string) =>
-  new Bun.CryptoHasher("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex").slice(0, 16);
+export const hashFile = async (path: string, salt = "") =>
+  new Bun.CryptoHasher("sha256").update(await Bun.file(path).arrayBuffer()).update(salt).digest("hex").slice(0, 16);
+
+export async function loadToken(dataDir: string) {
+  const path = join(dataDir, "auth-token");
+  const saved = (await Bun.file(path).text().catch(() => "")).trim();
+  if (saved) return saved;
+  const token = randomBytes(32).toString("hex");
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(path, token, { mode: 0o600, flag: "wx" });
+  return token;
+}
 
 const withStaging = async (work: (dir: string) => Promise<void>) => {
   const dir = await mkdtemp(join(tmpdir(), "slt-"));
@@ -37,6 +48,12 @@ export function createPatcher({ app, dataDir }: { app: string; dataDir: string }
     if (await Bun.file(target).exists()) return;
     await mkdir(dataDir, { recursive: true });
     await copyFile(spa, target);
+    const others = (await readdir(dataDir))
+      .filter((name) => /^xpui-.+\.spa$/.test(name))
+      .map((name) => join(dataDir, name))
+      .filter((path) => path !== target);
+    const byAge = await Promise.all(others.map(async (path) => ({ path, mtime: (await stat(path)).mtimeMs })));
+    await Promise.all(byAge.sort((a, b) => b.mtime - a.mtime).slice(1).map(({ path }) => rm(path)));
   }
 
   async function patchState(): Promise<PatchState> {
@@ -49,10 +66,11 @@ export function createPatcher({ app, dataDir }: { app: string; dataDir: string }
 
   async function apply(scriptPath: string) {
     if (!(await Bun.file(scriptPath).exists())) throw new Error(`script not found: ${scriptPath}`);
-    const [version, index, hash] = await Promise.all([spotifyVersion(), readIndex(), hashFile(scriptPath)]);
+    const [version, index, token] = await Promise.all([spotifyVersion(), readIndex(), loadToken(dataDir)]);
+    const hash = await hashFile(scriptPath, token);
     if (!index.includes(MARKER)) await backup(version);
 
-    const tag = `<script defer="defer" src="/${SCRIPT_NAME}" ${MARKER}="${hash}"></script>`;
+    const tag = `<script defer="defer" src="/${SCRIPT_NAME}" ${MARKER}="${hash}" data-slt-token="${token}"></script>`;
     const clean = index.replace(TAG_PATTERN, "");
     const patched = clean.includes(ANCHOR) ? clean.replace(ANCHOR, tag + ANCHOR) : clean.replace("</body>", `${tag}</body>`);
 
