@@ -1,32 +1,31 @@
+<div align="center">
+
 # Spotify Lyrics Translator
 
-Spotify 데스크톱 앱의 가사 화면(노래방 버튼)에서 원문 줄마다 LLM 번역을 한 줄씩 붙여 보여 줍니다. Spicetify 없이 동작하고, Spotify가 업데이트되어 패치가 풀리면 알아서 다시 적용합니다.
+Spotify 데스크톱 앱의 가사 화면에서 원문 줄마다 LLM 번역을 한 줄씩 붙여 보여 줍니다.<br>
+Spicetify 없이 동작하고, Spotify가 업데이트되어 패치가 풀리면 알아서 다시 적용합니다.
 
-## 동작 방식
+[설치](#설치) · [사용법](#사용법) · [번역기 설정](#번역기-설정) · [자동 업데이트](#자동-업데이트) · [문제 해결](#문제-해결) · [최신 릴리스](../../releases/latest)
 
-```
-Spotify 앱 (xpui.spa에 스크립트 한 줄 주입)
-  ├─ Spotify가 받아 오는 color-lyrics 응답에서 곡 전체 가사를 읽음
-  ├─ 화면에 떠 있는 가사로 지금 곡을 알아냄
-  ├─ 같은 곡이 0.4초 동안 그대로면 번역 요청, 곡이 바뀌면 요청 취소
-  ├─ data-testid="lyrics-line" 줄마다 번역 줄을 붙임
-  └─ Spotify 설정 화면에 번역기, API URL, API 키 입력칸과 연결 테스트 버튼을 넣음
-          │ http://127.0.0.1:47831/translate
-로컬 데몬 (Bun, launchd로 상시 실행)
-  ├─ 번역기 호출 (codex-gateway, OpenRouter, Claude, OpenAI 중 선택)
-  ├─ 설정 화면에서 받은 번역기, API URL, 키를 .env에 저장하고 바로 적용
-  ├─ 곡 단위 번역 캐시 (SQLite)
-  ├─ 30초마다 xpui.spa를 확인하고 패치가 풀렸으면 다시 적용
-  └─ Spotify를 끄거나 켤 때 GitHub 새 릴리스를 확인하고 자동 업데이트
-```
+<br>
 
-- 번역 줄은 Spotify 가사와 같은 색과 서체를 쓰고, 크기만 작고 조금 흐리게 보입니다. 지금 부르는 줄 강조도 원문과 함께 바뀝니다.
-- 일본어, 중국어, 영어, 한국어가 섞인 가사도 줄마다 끝까지 번역합니다. 한 줄 안에 여러 언어가 섞여 있으면 그 줄 전체를 한국어로 옮깁니다.
-- 전부 한국어인 줄, 빈 줄, `♪` 같은 기호 줄, "oh", "la la" 같은 추임새는 번역하지 않습니다.
-- 번역을 받은 뒤 다른 언어가 그대로 남은 줄이 있으면, 그 줄만 곡 전체를 참고해 한 번 더 번역합니다.
-- 한 번 번역한 곡은 캐시에서 바로 나옵니다.
+<img src="docs/lyrics-screen.png" alt="Spotify 가사 화면. 일본어 가사 줄마다 바로 아래에 한국어 번역이 작은 글자로 붙어 있고, 지금 부르는 줄은 원문과 번역이 함께 밝게 강조됩니다." width="760">
 
-## 요구 사항
+</div>
+
+## 특징
+
+- **원문 아래 번역 한 줄**: Spotify 가사와 같은 색과 서체를 쓰고, 크기만 작고 조금 흐리게 보입니다. 지금 부르는 줄 강조도 원문과 함께 바뀝니다.
+- **섞인 언어도 끝까지**: 일본어, 중국어, 영어, 한국어가 섞인 가사도 줄마다 번역합니다. 한 줄 안에 여러 언어가 섞여 있으면 그 줄 전체를 한국어로 옮깁니다.
+- **번역이 필요 없는 줄은 건너뜀**: 전부 한국어인 줄, 빈 줄, `♪` 같은 기호 줄, "oh", "la la" 같은 추임새는 번역하지 않습니다.
+- **남은 줄은 한 번 더**: 번역을 받은 뒤 다른 언어가 그대로 남은 줄이 있으면, 그 줄만 곡 전체를 참고해 한 번 더 번역합니다.
+- **곡 단위 캐시**: 한 번 번역한 곡은 캐시에서 바로 나옵니다.
+- **설정 화면에서 변경**: Spotify 설정 화면에서 번역기, API URL, API 키를 바꾸고 연결을 시험합니다.
+- **번역기 선택**: Codex Gateway, OpenRouter, Claude, OpenAI 중에서 고릅니다.
+
+## 설치
+
+### 요구 사항
 
 | 항목 | 확인한 버전 |
 |---|---|
@@ -37,31 +36,47 @@ Spotify 앱 (xpui.spa에 스크립트 한 줄 주입)
 
 패처가 `/Applications/Spotify.app` 안의 파일을 고치기 때문에, 명령을 실행하는 터미널 앱에 macOS의 "앱 관리" 권한이 있어야 합니다. 시스템 설정의 개인정보 보호 및 보안에서 켤 수 있습니다.
 
-## 설치
+### 순서
 
-1. 설정 파일을 만듭니다.
+1. 저장소를 `git clone`으로 받고 그 폴더로 들어갑니다. 자동 업데이트는 clone한 폴더에서만 동작합니다.
+
+2. 설정 파일을 만듭니다.
 
    ```bash
    cp .env.example .env
    chmod 600 .env
    ```
 
-2. `.env`에 쓸 번역기와 키를 넣습니다. 자세한 값은 아래 [번역기 설정](#번역기-설정)을 봅니다. 번역기, API URL, API 키는 설치가 끝난 뒤 Spotify 설정 화면에서 넣어도 됩니다.
+3. `.env`에 쓸 번역기와 키를 넣습니다. 자세한 값은 [번역기 설정](#번역기-설정)을 봅니다. 번역기, API URL, API 키는 설치가 끝난 뒤 Spotify 설정 화면에서 넣어도 됩니다.
 
-3. 데몬을 launchd에 등록합니다. 등록하면 바로 실행되고, 로그인할 때마다 자동으로 켜집니다. 처음 실행될 때 원본 `xpui.spa`를 백업하고 확장을 주입합니다.
+4. 데몬을 launchd에 등록합니다. 등록하면 바로 실행되고, 로그인할 때마다 자동으로 켜집니다. 처음 실행될 때 원본 `xpui.spa`를 백업하고 확장을 주입합니다.
 
    ```bash
    bun run install-agent
    ```
 
-4. Spotify를 완전히 종료했다가 다시 켭니다. 주입한 스크립트는 Spotify가 시작될 때 읽힙니다.
+5. Spotify를 완전히 종료했다가 다시 켭니다. 주입한 스크립트는 Spotify가 시작될 때 읽힙니다.
 
-5. 가사가 있는 곡을 틀고 가사 화면(오른쪽 패널 또는 전체 가사 화면)을 엽니다. 처음 보는 곡은 10초에서 25초쯤 뒤에 번역이 붙습니다.
+6. 가사가 있는 곡을 틀고 가사 화면(오른쪽 패널 또는 전체 가사 화면)을 엽니다. 처음 보는 곡은 10초에서 25초쯤 뒤에 번역이 붙습니다.
 
 ## 사용법
 
-- **API 설정**: Spotify 설정 화면 맨 위의 "가사 번역"에서 번역기를 고르고 API URL과 API 키를 넣습니다. 저장하면 `.env`에 기록되고 데몬을 다시 시작하지 않아도 바로 적용되며, 지금 곡도 새 번역기로 다시 번역합니다. 키 칸을 비워 두면 그 번역기에 저장된 키를 그대로 씁니다. 다른 서버로 주소를 바꿀 때는 키도 함께 입력해야 합니다.
-- **연결 테스트**: 입력한 값으로 짧은 영어 문장 하나를 실제로 번역해 봅니다. 저장하지 않으며, 번역기 사용량이 조금 나갑니다. 키가 틀렸는지, 주소나 모델을 찾지 못했는지, 서버에 닿지 않는지를 알려 줍니다.
+### 설정 화면
+
+Spotify 설정 화면 맨 위의 "가사 번역"에서 바꿉니다.
+
+<img src="docs/settings-screen.png" alt="Spotify 설정 화면에 추가된 가사 번역 섹션. 번역기 선택칸, API URL과 API 키 입력칸, 저장 버튼과 연결 테스트 버튼이 있고, 연결에 성공했다는 메시지가 보입니다." width="760">
+
+| 항목 | 설명 |
+|---|---|
+| 번역기 | 고르면 그 번역기에 저장된 주소와 키 상태로 바뀝니다 |
+| API URL | 번역기 주소입니다. 다른 서버로 주소를 바꿀 때는 키도 함께 입력해야 합니다 |
+| API 키 | 저장한 뒤에는 다시 표시되지 않습니다. 칸을 비워 두면 그 번역기에 저장된 키를 그대로 씁니다 |
+| 저장 | `.env`에 기록하고 데몬을 다시 시작하지 않아도 바로 적용합니다. 지금 곡도 새 번역기로 다시 번역합니다 |
+| 연결 테스트 | 입력한 값으로 짧은 영어 문장 하나를 실제로 번역해 봅니다. 저장하지 않으며, 번역기 사용량이 조금 나갑니다. 키가 틀렸는지, 주소나 모델을 찾지 못했는지, 서버에 닿지 않는지를 알려 줍니다 |
+
+### 가사 화면
+
 - **번역 켜고 끄기**: Spotify 창에서 `Alt+T`(`Option+T`)를 누릅니다. 입력칸에 글자를 넣는 중에는 동작하지 않습니다. 설정은 기억됩니다.
 - **번역 시점**: 가사 화면이 열려 있을 때만 지금 곡을 번역합니다. 가사 화면을 닫아 두면 요청하지 않습니다.
 - **곡 넘기기**: 빠르게 여러 곡을 넘기면 멈춘 곡 하나만 번역합니다. 넘어간 곡의 진행 중 요청은 번역기 호출까지 취소됩니다.
@@ -71,15 +86,27 @@ Spotify 앱 (xpui.spa에 스크립트 한 줄 주입)
 
 Spotify 설정 화면이나 `.env`의 `SLT_TRANSLATOR`로 번역기를 고릅니다. `.env`를 직접 고친 뒤에는 `bun run restart-agent`로 데몬을 다시 시작합니다. Spotify 설정 화면에서 저장한 값은 다시 시작하지 않아도 적용됩니다. 모델과 effort는 `.env`에서만 바꿀 수 있습니다. 캐시는 번역기, 모델, effort마다 따로 저장되므로 섞이지 않습니다.
 
-### 공통
+| 번역기 | `SLT_TRANSLATOR` | 기본 모델 | 사용량 |
+|---|---|---|---|
+| Codex Gateway | `codex` (기본값) | `gpt-6-astra` | ChatGPT 요금제의 Codex 사용량 |
+| OpenRouter | `openrouter` | `openai/gpt-6-luna` | OpenRouter 크레딧 |
+| Claude | `claude` | `claude-opus-5-5` | Anthropic API 사용량 |
+| OpenAI | `openai` | `gpt-6-luna` | OpenAI API 사용량 |
+| 가짜 번역기 | `mock` | 없음 | 없음. 줄 번호만 붙여 돌려주며 화면 표시를 확인할 때 씁니다 |
+
+모든 번역기에 공통으로 쓰는 값입니다.
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `SLT_TRANSLATOR` | `codex` | `codex`, `openrouter`, `claude`, `openai`, `mock` 중 하나 |
 | `SLT_EFFORT` | `medium` | 추론 강도. 낮을수록 빠르고 저렴합니다 |
 | `SLT_AUTO_UPDATE` | `1` | `0`이면 자동 업데이트를 끕니다 |
 
-### codex-gateway (`SLT_TRANSLATOR=codex`)
+번역기별 변수는 아래를 펼쳐 봅니다.
+
+<details>
+<summary><strong>Codex Gateway</strong></summary>
+
+<br>
 
 OpenAI Responses API 형식의 codex-gateway로 요청합니다. 게이트웨이 규칙에 맞춰 `stream: true`, `store: false`로 보내고, 스트림으로 온 텍스트 조각을 이어 붙여 씁니다.
 
@@ -92,7 +119,12 @@ OpenAI Responses API 형식의 codex-gateway로 요청합니다. 게이트웨이
 
 fast 모드는 기본으로 켜져 있습니다. 요청에 `"service_tier": "priority"`를 넣어 Codex CLI의 `/fast on`과 같게 처리합니다. 글자가 나오는 속도가 빨라지는 대신 ChatGPT 요금제의 Codex 사용량을 표준의 2.5배 씁니다. 모델이 fast 모드를 지원하지 않으면 오류 없이 표준 속도로 처리됩니다. 사용량을 아끼려면 `CODEX_SERVICE_TIER=default`로 둡니다. 속도만 달라지고 번역 결과는 같아서, 값을 바꿔도 이미 캐시된 번역을 그대로 씁니다.
 
-### OpenRouter (`SLT_TRANSLATOR=openrouter`)
+</details>
+
+<details>
+<summary><strong>OpenRouter</strong></summary>
+
+<br>
 
 `/chat/completions`에 JSON 스키마 형식(`strict: true`)을 붙여 요청합니다. 이 형식을 지원하는 모델에만 보내도록 `provider.require_parameters: true`를 넣습니다.
 
@@ -102,7 +134,12 @@ fast 모드는 기본으로 켜져 있습니다. 요청에 `"service_tier": "pri
 | `OPENROUTER_MODEL` | `openai/gpt-6-luna` | 구조화 출력(`structured_outputs`)을 지원하는 모델 |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | 바꿀 일이 거의 없습니다 |
 
-### Claude (`SLT_TRANSLATOR=claude`)
+</details>
+
+<details>
+<summary><strong>Claude</strong></summary>
+
+<br>
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
@@ -110,7 +147,12 @@ fast 모드는 기본으로 켜져 있습니다. 요청에 `"service_tier": "pri
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | 바꿀 일이 거의 없습니다 |
 | `SLT_MODEL` | `claude-opus-5-5` | 모델 ID |
 
-### OpenAI (`SLT_TRANSLATOR=openai`)
+</details>
+
+<details>
+<summary><strong>OpenAI</strong></summary>
+
+<br>
 
 OpenAI API 키로 Responses API를 직접 부릅니다. ChatGPT 요금제가 아니라 API 사용량으로 과금됩니다. `store: false`로 보내고, 응답은 JSON 스키마 형식(`strict: true`)으로 받습니다.
 
@@ -120,9 +162,7 @@ OpenAI API 키로 Responses API를 직접 부릅니다. ChatGPT 요금제가 아
 | `OPENAI_MODEL` | `gpt-6-luna` | `reasoning.effort`와 구조화 출력을 지원하는 모델 |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | 바꿀 일이 거의 없습니다 |
 
-### 가짜 번역기 (`SLT_TRANSLATOR=mock`)
-
-키 없이 줄 번호만 붙여 돌려줍니다. 화면 표시를 확인할 때 씁니다.
+</details>
 
 ## 명령어
 
@@ -142,6 +182,30 @@ OpenAI API 키로 Responses API를 직접 부릅니다. ChatGPT 요금제가 아
 
 `bun run status`의 `patchedHash`가 `null`이면 패치가 풀린 상태이고, 값이 있으면 그 해시의 확장이 들어가 있는 상태입니다.
 
+## 동작 방식
+
+```mermaid
+flowchart LR
+    ext["Spotify 앱<br/>xpui.spa에 주입한 확장"]
+    daemon["로컬 데몬<br/>Bun, launchd로 상시 실행"]
+    cache[("번역 캐시<br/>SQLite")]
+    llm["번역기<br/>Codex Gateway, OpenRouter,<br/>Claude, OpenAI"]
+    github["GitHub 릴리스"]
+
+    ext -- "가사 번역 요청" --> daemon
+    daemon -- "번역 결과" --> ext
+    daemon <--> cache
+    daemon -- "캐시에 없는 곡" --> llm
+    daemon -- "새 버전 확인" --> github
+```
+
+1. 확장이 Spotify가 받아 오는 `color-lyrics` 응답에서 곡 전체 가사를 읽고, 화면에 떠 있는 가사로 지금 곡을 알아냅니다.
+2. 같은 곡이 0.4초 동안 그대로면 `http://127.0.0.1:47831/translate`로 번역을 요청합니다. 곡이 바뀌면 요청을 취소합니다.
+3. 데몬이 곡 단위 캐시를 확인하고, 없으면 고른 번역기를 부릅니다.
+4. 확장이 `data-testid="lyrics-line"` 줄마다 번역 줄을 붙입니다.
+
+데몬은 설정 화면에서 받은 번역기, API URL, 키를 `.env`에 저장해 바로 적용합니다. 또 30초마다 `xpui.spa`를 확인해 패치가 풀렸으면 다시 적용하고, Spotify를 끄거나 켤 때 GitHub 새 릴리스를 확인합니다.
+
 ## 자동 업데이트
 
 데몬이 GitHub의 최신 릴리스를 확인해서 새 버전이 있으면 스스로 업데이트합니다.
@@ -156,17 +220,19 @@ OpenAI API 키로 Responses API를 직접 부릅니다. ChatGPT 요금제가 아
 
 다음 경우에는 업데이트하지 않고 로그만 남깁니다.
 
-- 추적 중인 파일에 고친 내용이 있을 때 (`local changes`). `.env` 같은 추적하지 않는 파일은 상관없습니다.
-- 릴리스에 없는 로컬 커밋이 있을 때 (`local commits are not in the release`)
-- `git clone`으로 받은 폴더가 아닐 때 (`not a git checkout`)
-- 서명 검증을 켰는데 서명이 없거나 등록되지 않은 키로 서명했을 때 (`release signature is not trusted`)
-- 새 코드가 시작 점검을 통과하지 못해 되돌렸을 때 (`release failed its startup check and was rolled back`)
+| 경우 | 로그 |
+|---|---|
+| 추적 중인 파일에 고친 내용이 있을 때. `.env` 같은 추적하지 않는 파일은 상관없습니다 | `local changes` |
+| 릴리스에 없는 로컬 커밋이 있을 때 | `local commits are not in the release` |
+| `git clone`으로 받은 폴더가 아닐 때 | `not a git checkout` |
+| 서명 검증을 켰는데 서명이 없거나 등록되지 않은 키로 서명했을 때 | `release signature is not trusted` |
+| 새 코드가 시작 점검을 통과하지 못해 되돌렸을 때 | `release failed its startup check and was rolled back` |
 
 지금 버전은 `bun run version`, 즉시 업데이트는 `bun run update`로 합니다. 코드를 직접 고쳐 쓰고 있다면 `.env`에 `SLT_AUTO_UPDATE=0`을 넣어 끕니다.
 
 ### 릴리스 서명
 
-저장소 최상위에 `release-signers` 파일이 있으면, 그 파일에 등록된 SSH 키로 서명한 태그만 업데이트합니다. 파일이 없으면 지금처럼 서명을 확인하지 않습니다. 검증에는 받아 온 코드가 아니라 이미 설치된 쪽의 파일을 쓰므로, 릴리스 안에서 몰래 키를 바꿔도 통과하지 못합니다.
+저장소 최상위에 `release-signers` 파일이 있으면, 그 파일에 등록된 SSH 키로 서명한 태그만 업데이트합니다. 파일이 없으면 서명을 확인하지 않습니다. 검증에는 받아 온 코드가 아니라 이미 설치된 쪽의 파일을 쓰므로, 릴리스 안에서 몰래 키를 바꿔도 통과하지 못합니다.
 
 ```bash
 ssh-keygen -t ed25519 -f "$HOME/.ssh/slt-release" -C slt-release
@@ -190,6 +256,8 @@ Spotify가 업데이트되면 앱 전체가 교체되어 패치가 풀립니다.
 bun run logs
 ```
 
+### 번역과 연결
+
 | 로그 또는 증상 | 원인과 대응 |
 |---|---|
 | `listening on ...`만 있고 요청이 없음 | 가사 화면이 닫혀 있거나, Spotify를 다시 켜지 않아 확장이 로드되지 않았습니다. `bun run status`로 패치를 확인하고 Spotify를 다시 켭니다 |
@@ -205,17 +273,42 @@ bun run logs
 | `openrouter 402` | OpenRouter 크레딧이 부족합니다 |
 | `openai 429` | OpenAI 사용 한도를 넘었거나 크레딧이 부족합니다 |
 | `connection test failed ...` | 설정 화면의 연결 테스트가 실패한 이유입니다 |
-| `patch check failed` | 앱 폴더를 고칠 권한이 없을 수 있습니다. 터미널과 Bun에 "앱 관리" 권한을 줍니다 |
-| `update check on spotify quit: v0.2.1 is up to date` | 확인했고 이미 최신입니다 |
-| `updated 0.2.0 to v0.2.1 on spotify quit` | 자동 업데이트가 끝났습니다. Spotify를 켜면 새 버전이 로드됩니다 |
-| `update to vX.Y.Z skipped on ...` | 뒤에 붙은 이유 때문에 건너뛰었습니다. [자동 업데이트](#자동-업데이트)를 봅니다 |
-| `update check failed` | GitHub에 닿지 않았거나 API 한도에 걸렸습니다. 다음 확인 때 다시 시도합니다 |
 
 게이트웨이 연결만 따로 확인하려면 다음을 실행합니다.
 
 ```bash
 curl https://gateway.example/health
 ```
+
+### 패치와 업데이트
+
+| 로그 | 원인과 대응 |
+|---|---|
+| `patch check failed` | 앱 폴더를 고칠 권한이 없을 수 있습니다. 터미널과 Bun에 "앱 관리" 권한을 줍니다 |
+| `update check on spotify quit: v0.2.1 is up to date` | 확인했고 이미 최신입니다 |
+| `updated 0.2.0 to v0.2.1 on spotify quit` | 자동 업데이트가 끝났습니다. Spotify를 켜면 새 버전이 로드됩니다 |
+| `update to vX.Y.Z skipped on ...` | 뒤에 붙은 이유 때문에 건너뛰었습니다. [자동 업데이트](#자동-업데이트)를 봅니다 |
+| `update check failed` | GitHub에 닿지 않았거나 API 한도에 걸렸습니다. 다음 확인 때 다시 시도합니다 |
+
+## 보안과 주의 사항
+
+- **API 키**: `.env`에만 두고 저장소에 올리지 않습니다. `.gitignore`에 들어 있고, 데몬이 시작할 때 파일 권한을 600으로 맞춥니다. 데몬은 키를 화면으로 돌려주지 않습니다.
+- **데몬 접근 제한**: 데몬은 `127.0.0.1`에서만 받고, 출처가 `https://xpui.app.spotify.com`이면서 설치마다 만든 토큰이 맞는 요청만 처리합니다. 일반 웹 페이지나 토큰을 모르는 로컬 프로그램이 데몬을 부르지 못하게 하기 위해서입니다. 토큰은 `xpui.spa`에도 들어가므로 이 파일을 읽을 수 있는 프로그램은 토큰도 읽을 수 있습니다. 같은 계정으로 도는 프로그램은 `.env`도 읽을 수 있으니 이 경우는 막지 못합니다.
+- **설정 저장과 연결 테스트**: 다른 서버로 주소를 바꾸려면 키도 다시 입력해야 하므로, 저장이든 연결 테스트든 저장된 키가 새 서버로 넘어가지 않습니다. 줄바꿈이나 셸 문자가 든 값은 거부합니다.
+- **평문 전송**: API URL이 HTTP이고 이 컴퓨터 밖을 가리키면 키와 가사 원문이 평문으로 흐릅니다. 설정 화면과 로그에 경고가 나오며, 근본적인 해결은 게이트웨이에 HTTPS를 붙이는 것입니다.
+- **외부 전송**: 가사 원문과 곡 ID가 고른 번역기(codex-gateway를 거친 Codex, OpenRouter, Anthropic, OpenAI)로 전송되고 사용량이 과금됩니다.
+- **코드 서명**: 패치하는 동안에는 Spotify 앱의 코드 서명 검증이 실패합니다. 이미 설치된 앱은 실행할 때마다 서명을 다시 검사하지 않아서 실행에는 문제가 없습니다.
+- **Spicetify와 함께 쓰기**: 같은 파일을 고치므로 `spicetify apply`와 함께 쓰면 충돌할 수 있습니다.
+- **자동 업데이트**: 이 저장소의 정식 릴리스 코드를 받아 이 기기에서 실행합니다. [릴리스 서명](#릴리스-서명)을 켜면 등록한 키로 서명한 릴리스만 받습니다. 이 저장소를 믿을 수 없는 상황이면 `SLT_AUTO_UPDATE=0`으로 끕니다.
+- **포트 변경**: 포트를 바꾸려면 `SLT_PORT`와 `extension/lyrics-translator.js`의 `API`를 함께 바꿔야 합니다.
+
+## 한계
+
+- 가사 화면이 닫혀 있으면 번역하지 않으므로, 처음 듣는 곡은 가사를 연 뒤 잠시 기다려야 합니다.
+- 번역은 곡 전체를 한 번에 받아서 붙입니다. 조각 단위로 먼저 보여 주지는 않습니다.
+- 설정 화면의 "가사 번역"은 Spotify 설정 검색에 걸러지지 않고 항상 보입니다.
+- 설정 화면에서는 번역기, API URL, 키만 바꿀 수 있습니다. 모델과 effort는 `.env`에서 바꿉니다.
+- Spotify가 가사 화면 구조(`data-testid="lyrics-line"`)나 가사 API 경로(`color-lyrics/v2`)를 바꾸면 번역이 붙지 않습니다. 이때도 Spotify 원래 가사 화면은 그대로 나옵니다.
 
 ## 제거
 
@@ -254,24 +347,9 @@ extension/
   lyrics-translator.js   Spotify에 주입되는 확장
   dev-loader.js          개발 모드 로더
 test/                    bun test
+docs/                    README 이미지
 ```
 
-## 보안과 주의 사항
+## 라이선스
 
-- **API 키**: `.env`에만 두고 저장소에 올리지 않습니다. `.gitignore`에 들어 있고, 데몬이 시작할 때 파일 권한을 600으로 맞춥니다. 데몬은 키를 화면으로 돌려주지 않습니다.
-- **데몬 접근 제한**: 데몬은 `127.0.0.1`에서만 받고, 출처가 `https://xpui.app.spotify.com`이면서 설치마다 만든 토큰이 맞는 요청만 처리합니다. 일반 웹 페이지나 토큰을 모르는 로컬 프로그램이 데몬을 부르지 못하게 하기 위해서입니다. 토큰은 `xpui.spa`에도 들어가므로 이 파일을 읽을 수 있는 프로그램은 토큰도 읽을 수 있습니다. 같은 계정으로 도는 프로그램은 `.env`도 읽을 수 있으니 이 경우는 막지 못합니다.
-- **설정 저장과 연결 테스트**: 다른 서버로 주소를 바꾸려면 키도 다시 입력해야 하므로, 저장이든 연결 테스트든 저장된 키가 새 서버로 넘어가지 않습니다. 줄바꿈이나 셸 문자가 든 값은 거부합니다.
-- **평문 전송**: API URL이 HTTP이고 이 컴퓨터 밖을 가리키면 키와 가사 원문이 평문으로 흐릅니다. 설정 화면과 로그에 경고가 나오며, 근본적인 해결은 게이트웨이에 HTTPS를 붙이는 것입니다.
-- **외부 전송**: 가사 원문과 곡 ID가 고른 번역기(codex-gateway를 거친 Codex, OpenRouter, Anthropic, OpenAI)로 전송되고 사용량이 과금됩니다.
-- **코드 서명**: 패치하는 동안에는 Spotify 앱의 코드 서명 검증이 실패합니다. 이미 설치된 앱은 실행할 때마다 서명을 다시 검사하지 않아서 실행에는 문제가 없습니다.
-- **Spicetify와 함께 쓰기**: 같은 파일을 고치므로 `spicetify apply`와 함께 쓰면 충돌할 수 있습니다.
-- **자동 업데이트**: GitHub 저장소 `yldst-dev/Spotify-Lyrics-Translator`의 정식 릴리스 코드를 받아 이 기기에서 실행합니다. [릴리스 서명](#릴리스-서명)을 켜면 등록한 키로 서명한 릴리스만 받습니다. 이 저장소를 믿을 수 없는 상황이면 `SLT_AUTO_UPDATE=0`으로 끕니다.
-- **포트 변경**: 포트를 바꾸려면 `SLT_PORT`와 `extension/lyrics-translator.js`의 `API`를 함께 바꿔야 합니다.
-
-## 한계
-
-- 가사 화면이 닫혀 있으면 번역하지 않으므로, 처음 듣는 곡은 가사를 연 뒤 잠시 기다려야 합니다.
-- 번역은 곡 전체를 한 번에 받아서 붙입니다. 조각 단위로 먼저 보여 주지는 않습니다.
-- 설정 화면의 "가사 번역"은 Spotify 설정 검색에 걸러지지 않고 항상 보입니다.
-- 설정 화면에서는 번역기, API URL, 키만 바꿀 수 있습니다. 모델과 effort는 `.env`에서 바꿉니다.
-- Spotify가 가사 화면 구조(`data-testid="lyrics-line"`)나 가사 API 경로(`color-lyrics/v2`)를 바꾸면 번역이 붙지 않습니다. 이때도 Spotify 원래 가사 화면은 그대로 나옵니다.
+[MIT](LICENSE)
