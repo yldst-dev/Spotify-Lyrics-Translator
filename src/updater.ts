@@ -120,7 +120,7 @@ export async function applyUpdate(
   if (branch) await git(["merge", "--ff-only", "--quiet", target]);
   else await git(["checkout", "--quiet", "--detach", target]);
 
-  if (!(await verify(root))) {
+  if (!(await verify(root).catch(() => false))) {
     await git(["reset", "--keep", from]);
     return skip("release failed its startup check and was rolled back");
   }

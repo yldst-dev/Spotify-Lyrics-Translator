@@ -103,6 +103,19 @@ test("a release that fails the startup check is rolled back", async () => {
   expect((await git(clone, ["status", "--porcelain"]).text()).trim()).toBe("");
 });
 
+test("a startup check that throws also rolls back", async () => {
+  const before = (await git(clone, ["rev-parse", "HEAD"]).text()).trim();
+  const verify = async () => {
+    throw new Error("could not create a temporary directory");
+  };
+  expect(await applyUpdate("v0.2.0", { root: clone, remote: upstream, verify })).toEqual({
+    status: "skipped",
+    reason: "release failed its startup check and was rolled back",
+  });
+  expect((await git(clone, ["rev-parse", "HEAD"]).text()).trim()).toBe(before);
+  expect(await currentVersion(clone)).toBe("0.1.0");
+});
+
 test("daemonBoots accepts this checkout and rejects a daemon that crashes", async () => {
   expect(await daemonBoots()).toBe(true);
   const root = await mkdtemp(join(tmpdir(), "slt-broken-"));
