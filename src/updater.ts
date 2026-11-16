@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { ROOT, SPOTIFY_ORIGIN } from "./config";
 import { loadToken } from "./patcher";
 
-export const UPDATE_REPO = process.env.SLT_UPDATE_REPO ?? "yldst-dev/Spotify-Lyrics-Translator";
+const UPDATE_REPO = process.env.SLT_UPDATE_REPO || "yldst-dev/Spotify-Lyrics-Translator";
 const VERSION_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
 const SIGNERS_FILE = "release-signers";
 const BOOT_TIMEOUT_MS = 15_000;
 
-export type UpdateResult = { status: "updated"; from: string; to: string } | { status: "skipped"; reason: string };
+type UpdateResult = { status: "updated"; from: string; to: string } | { status: "skipped"; reason: string };
 
 const parseVersion = (value: string) => {
   const match = (value.startsWith("v") ? value : `v${value}`).match(VERSION_TAG);
@@ -48,7 +48,7 @@ const freePort = () => {
   return port as number;
 };
 
-export async function daemonBoots(root = ROOT) {
+export async function daemonBoots(root = ROOT, timeoutMs = BOOT_TIMEOUT_MS) {
   const dataDir = await mkdtemp(join(tmpdir(), "slt-boot-"));
   const port = freePort();
   const token = await loadToken(dataDir);
@@ -68,12 +68,13 @@ export async function daemonBoots(root = ROOT) {
     stderr: "ignore",
   });
   try {
-    const deadline = Date.now() + BOOT_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline && child.exitCode === null) {
       const res = await fetch(`http://127.0.0.1:${port}/translate`, {
         method: "POST",
         headers: { origin: SPOTIFY_ORIGIN, "x-slt-token": token, "content-type": "application/json" },
         body: JSON.stringify({ trackId: "0".repeat(22), lang: "ko", lines: ["boot check"] }),
+        signal: AbortSignal.timeout(2_000),
       }).catch(() => null);
       if (res?.ok) return true;
       await Bun.sleep(200);

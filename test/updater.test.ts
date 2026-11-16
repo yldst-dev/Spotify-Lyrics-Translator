@@ -125,6 +125,16 @@ test("daemonBoots accepts this checkout and rejects a daemon that crashes", asyn
   expect(await daemonBoots(root)).toBe(false);
 }, 30_000);
 
+test("daemonBoots gives up on a daemon that accepts connections but never answers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "slt-hung-"));
+  roots.push(root);
+  await mkdir(join(root, "src"));
+  await writeFile(join(root, "src/daemon.ts"), 'Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.SLT_PORT), fetch: () => new Promise(() => {}) });');
+  const started = Date.now();
+  expect(await daemonBoots(root, 1500)).toBe(false);
+  expect(Date.now() - started).toBeLessThan(10_000);
+}, 30_000);
+
 async function signingKey(name: string) {
   const dir = await mkdtemp(join(tmpdir(), "slt-key-"));
   roots.push(dir);

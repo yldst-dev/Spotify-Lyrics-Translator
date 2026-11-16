@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DATA_DIR, DEV_LOADER, EXTENSION, LAUNCHD_LABEL, ROOT } from "./config";
+import { DATA_DIR, EXTENSION, LAUNCHD_LABEL, LOG_FILE, ROOT } from "./config";
 import { spotify } from "./patcher";
 import { applyUpdate, currentVersion, isNewer, latestRelease } from "./updater";
 
@@ -18,7 +18,7 @@ const plist = (logPath: string) => `<?xml version="1.0" encoding="UTF-8"?>
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${escapeXml(process.execPath)}</string>
+    <string>${escapeXml(Bun.which("bun") ?? process.execPath)}</string>
     <string>${escapeXml(join(ROOT, "src/daemon.ts"))}</string>
   </array>
   <key>WorkingDirectory</key><string>${escapeXml(ROOT)}</string>
@@ -34,7 +34,7 @@ async function install() {
   await mkdir(DATA_DIR, { recursive: true });
   await mkdir(join(homedir(), "Library/LaunchAgents"), { recursive: true });
   await $`launchctl bootout ${DOMAIN}/${LAUNCHD_LABEL}`.quiet().nothrow();
-  await writeFile(PLIST, plist(join(DATA_DIR, "daemon.log")));
+  await writeFile(PLIST, plist(LOG_FILE));
   await $`launchctl bootstrap ${DOMAIN} ${PLIST}`;
   console.log(`installed ${PLIST}`);
 }
@@ -45,7 +45,7 @@ async function restart() {
 }
 
 async function logs() {
-  await $`tail -n 50 -f ${join(DATA_DIR, "daemon.log")}`;
+  await $`tail -n 50 -f ${LOG_FILE}`;
 }
 
 async function update() {
@@ -59,7 +59,7 @@ async function update() {
     console.log(`update to ${latest} skipped: ${result.reason}`);
     return;
   }
-  console.log(`updated v${current} to ${result.to}`);
+  console.log(`updated ${current} to ${result.to}`);
   await $`launchctl kickstart -k ${DOMAIN}/${LAUNCHD_LABEL}`.quiet().nothrow();
   console.log("restart Spotify to load the new extension");
 }
@@ -72,7 +72,6 @@ async function uninstall() {
 
 const commands: Record<string, () => Promise<unknown>> = {
   apply: async () => console.log(await spotify.apply(EXTENSION)),
-  dev: async () => console.log(await spotify.apply(DEV_LOADER)),
   restore: async () => console.log((await spotify.restore()) ? "restored" : "not patched"),
   status: async () => console.log({ spa: spotify.spa, ...(await spotify.patchState()) }),
   install,

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { chmod, stat } from "node:fs/promises";
-import { AUTO_UPDATE, DATA_DIR, DEV, DEV_LOADER, ENV_FILE, EXTENSION, PORT, SPOTIFY_ORIGIN } from "./config";
+import { AUTO_UPDATE, DATA_DIR, DEV, DEV_LOADER, ENV_FILE, EXTENSION, LOG_FILE, PORT, SPOTIFY_ORIGIN } from "./config";
+import { rotateLog } from "./logs";
 import { hashFile, loadToken, spotify } from "./patcher";
 import { activeUsesPlainHttp, readSettings, resolveSettings, runConnectionTest, saveSettings } from "./settings";
 import { classifyFailure, createTranslator, isSupportedLanguage, isTransient, providerFromEnv } from "./translator";
@@ -14,6 +15,7 @@ const SPOTIFY_POLL_MS = 5_000;
 const UPDATE_MIN_INTERVAL_MS = 10 * 60_000;
 const SPOTIFY_EVENT_MIN_INTERVAL_MS = 60_000;
 const UPDATE_PERIOD_MS = 6 * 60 * 60_000;
+const MAX_LOG_BYTES = 5 * 1024 * 1024;
 
 const CORS = {
   "access-control-allow-origin": SPOTIFY_ORIGIN,
@@ -53,8 +55,14 @@ function parseTranslateBody(body: unknown) {
 }
 
 async function handleTranslate(req: Request) {
-  const input = parseTranslateBody(await req.json().catch(() => null));
-  if (!input) return json({ error: "invalid request" }, 400);
+  const body = await req.json().catch(() => null);
+  const input = parseTranslateBody(body);
+  if (!input) {
+    const lines = (body as { lines?: unknown } | null)?.lines;
+    const longest = Array.isArray(lines) ? lines.reduce((max, line) => Math.max(max, typeof line === "string" ? line.length : 0), 0) : 0;
+    log("invalid translate request", Array.isArray(lines) ? `${lines.length} lines, longest ${longest} characters` : "malformed body");
+    return json({ error: "invalid request" }, 400);
+  }
   const started = performance.now();
   try {
     const translations = await translate(input.trackId, input.lang, input.lines, req.signal);
@@ -127,8 +135,10 @@ Bun.serve({
 });
 
 let lastSeen = "";
+let lastPatchFailure = "";
 
 async function ensurePatched() {
+  if (updating) return;
   const script = DEV ? DEV_LOADER : EXTENSION;
   try {
     const hash = await hashFile(script, TOKEN);
@@ -143,13 +153,17 @@ async function ensurePatched() {
       log(`patched Spotify ${state.version} with ${DEV ? "dev loader" : "extension"} ${hash}`);
     }
     lastSeen = await signature();
+    lastPatchFailure = "";
   } catch (error) {
-    log("patch check failed", String(error));
+    const message = String(error);
+    if (message !== lastPatchFailure) log("patch check failed", message);
+    lastPatchFailure = message;
   }
 }
 
 let lastUpdateCheck = 0;
 let updating = false;
+let rejectedTag = "";
 
 async function checkForUpdate(reason: string, minIntervalMs = UPDATE_MIN_INTERVAL_MS) {
   if (DEV || !AUTO_UPDATE || updating || Date.now() - lastUpdateCheck < minIntervalMs) return;
@@ -161,8 +175,13 @@ async function checkForUpdate(reason: string, minIntervalMs = UPDATE_MIN_INTERVA
       log(`update check on ${reason}: v${current} is up to date`);
       return;
     }
+    if (latest === rejectedTag) {
+      log(`update to ${latest} skipped on ${reason}: it already failed its startup check`);
+      return;
+    }
     const result = await applyUpdate(latest);
     if (result.status === "skipped") {
+      if (result.reason.endsWith("rolled back")) rejectedTag = latest;
       log(`update to ${latest} skipped on ${reason}: ${result.reason}`);
       return;
     }
@@ -184,11 +203,14 @@ async function watchSpotify() {
   await checkForUpdate(running ? "spotify start" : "spotify quit", SPOTIFY_EVENT_MIN_INTERVAL_MS);
 }
 
+const trimLog = () => rotateLog(LOG_FILE, MAX_LOG_BYTES).catch(() => false);
+await trimLog();
 warnIfPlainHttp();
 await ensurePatched();
 setInterval(ensurePatched, WATCH_INTERVAL_MS);
 setInterval(watchSpotify, SPOTIFY_POLL_MS);
 setInterval(() => checkForUpdate("schedule"), UPDATE_PERIOD_MS);
+setInterval(trimLog, UPDATE_PERIOD_MS);
 setTimeout(() => checkForUpdate("startup"), 10_000);
 log(
   `v${await currentVersion()} listening on 127.0.0.1:${PORT} with ${provider.id}${DEV ? " (dev)" : ""}${AUTO_UPDATE && !DEV ? "" : " (auto update off)"}`,

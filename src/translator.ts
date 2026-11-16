@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { DATA_DIR } from "./config";
 
 const PROMPT_VERSION = 3;
+const CACHE_TTL_MS = 180 * 86_400_000;
 const REQUEST_TIMEOUT_MS = 180_000;
 const MAX_ATTEMPTS = 3;
 
@@ -18,7 +19,7 @@ const LANGUAGE_NAMES: Record<string, string> = {
   de: "German",
 };
 
-export const isSupportedLanguage = (lang: string) => lang in LANGUAGE_NAMES;
+export const isSupportedLanguage = (lang: string) => Object.hasOwn(LANGUAGE_NAMES, lang);
 
 const SYSTEM = `You translate song lyrics for display directly under each original line in a music player.
 Translate each line so it reads naturally as lyrics in the target language, keeping tone, imagery, and wordplay rather than translating word for word.
@@ -47,8 +48,8 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-export type Item = { i: number; text: string };
-export type TranslateOptions = { signal?: AbortSignal; focus?: number[] };
+type Item = { i: number; text: string };
+type TranslateOptions = { signal?: AbortSignal; focus?: number[] };
 export type Provider = { id: string; translate: (lang: string, items: Item[], options?: TranslateOptions) => Promise<Item[]> };
 type SseEvent = { type?: string; [key: string]: unknown };
 
@@ -177,10 +178,10 @@ export const CONNECTIONS: Record<string, { label: string; urlVar: string; keyVar
   codex: { label: "Codex Gateway", urlVar: "CODEX_GATEWAY_BASE_URL", keyVar: "CODEX_GATEWAY_API_KEY", defaultUrl: "" },
   openrouter: { label: "OpenRouter", urlVar: "OPENROUTER_BASE_URL", keyVar: "OPENROUTER_API_KEY", defaultUrl: "https://openrouter.ai/api/v1" },
   claude: { label: "Claude", urlVar: "ANTHROPIC_BASE_URL", keyVar: "ANTHROPIC_API_KEY", defaultUrl: "https://api.anthropic.com" },
-  openai: { label: "OpenAI (ChatGPT API)", urlVar: "OPENAI_BASE_URL", keyVar: "OPENAI_API_KEY", defaultUrl: "https://api.openai.com/v1" },
+  openai: { label: "OpenAI API", urlVar: "OPENAI_BASE_URL", keyVar: "OPENAI_API_KEY", defaultUrl: "https://api.openai.com/v1" },
 };
 
-export const translatorId = (env: Env) => env.SLT_TRANSLATOR ?? "codex";
+export const translatorId = (env: Env) => env.SLT_TRANSLATOR || "codex";
 
 const connectionFrom = (id: string, env: Env) => {
   const { urlVar, keyVar, defaultUrl } = CONNECTIONS[id];
@@ -189,8 +190,8 @@ const connectionFrom = (id: string, env: Env) => {
 
 const STREAM_FAILURES = new Set(["response.failed", "response.incomplete", "response.refusal.done", "error"]);
 
-export const CODEX_SERVICE_TIERS = ["priority", "default"] as const;
-export type CodexServiceTier = (typeof CODEX_SERVICE_TIERS)[number];
+const CODEX_SERVICE_TIERS = ["priority", "default"] as const;
+type CodexServiceTier = (typeof CODEX_SERVICE_TIERS)[number];
 
 type ConnectionOptions = { baseUrl: string; apiKey?: string; model: string; effort: string; retryDelayMs?: number };
 
@@ -233,7 +234,15 @@ function createResponsesProvider(
 
     let deltas = "";
     let done: string | null = null;
-    for await (const event of readSse(res.body)) {
+    const events = async function* () {
+      try {
+        yield* readSse(res.body!);
+      } catch (error) {
+        if (isAbort(error)) throw error;
+        throw new RetryableError(`${label} stream broke: ${String(error)}`);
+      }
+    };
+    for await (const event of events()) {
       if (event.type === "response.output_text.delta" && typeof event.delta === "string") deltas += event.delta;
       else if (event.type === "response.output_text.done" && typeof event.text === "string") done = event.text;
       else if (STREAM_FAILURES.has(String(event.type))) throw new Error(`${label} ${event.type}: ${JSON.stringify(event).slice(0, 300)}`);
@@ -249,7 +258,7 @@ function createResponsesProvider(
 
 export function createCodexProvider({ serviceTier = "priority", ...options }: ConnectionOptions & { serviceTier?: CodexServiceTier }) {
   const tier = serviceTier === "priority" ? { service_tier: "priority" } : {};
-  return createResponsesProvider("codex", "codex gateway", options, tier, (status) => status === 502);
+  return createResponsesProvider("codex", "codex gateway", options, tier, (status) => status === 429 || status === 500 || status === 502 || status === 504);
 }
 
 export function createOpenAIProvider(options: ConnectionOptions) {
@@ -257,13 +266,7 @@ export function createOpenAIProvider(options: ConnectionOptions) {
   return createResponsesProvider("openai", "openai", options, { text: { format } }, (status) => status === 429 || status >= 500);
 }
 
-export function createOpenRouterProvider(options: {
-  baseUrl: string;
-  apiKey?: string;
-  model: string;
-  effort: string;
-  retryDelayMs?: number;
-}): Provider {
+export function createOpenRouterProvider(options: ConnectionOptions): Provider {
   const { baseUrl, apiKey, model, effort, retryDelayMs = 2000 } = options;
 
   async function once(lang: string, items: Item[], { signal, focus }: TranslateOptions) {
@@ -305,7 +308,8 @@ export function createOpenRouterProvider(options: {
     };
     if (body.error) {
       const code = body.error.code ?? 0;
-      throw code === 429 || code >= 500 ? new RetryableError(detail) : new Error(detail);
+      const coded = `openrouter ${code || res.status}: ${raw.slice(0, 300)}`;
+      throw code === 429 || code >= 500 ? new RetryableError(coded) : new Error(coded);
     }
     const choice = body.choices?.[0];
     if (choice?.finish_reason === "length") throw new Error("openrouter answer was cut off");
@@ -318,13 +322,7 @@ export function createOpenRouterProvider(options: {
   };
 }
 
-export function createClaudeProvider(options: {
-  baseUrl: string;
-  apiKey?: string;
-  model: string;
-  effort: string;
-  retryDelayMs?: number;
-}): Provider {
+export function createClaudeProvider(options: ConnectionOptions): Provider {
   const { baseUrl, apiKey, model, effort, retryDelayMs = 2000 } = options;
 
   async function once(lang: string, items: Item[], { signal, focus }: TranslateOptions) {
@@ -368,22 +366,22 @@ export function createClaudeProvider(options: {
   };
 }
 
-export const mockProvider: Provider = {
+const mockProvider: Provider = {
   id: "mock",
   translate: async (_lang, items, { focus } = {}) =>
     items.filter(({ i }) => !focus || focus.includes(i)).map(({ i }) => ({ i, text: `〔${i + 1}〕` })),
 };
 
 export function providerFromEnv(env: Env = process.env): Provider {
-  const effort = env.SLT_EFFORT ?? "medium";
+  const effort = env.SLT_EFFORT || "medium";
   switch (translatorId(env)) {
     case "codex": {
-      const serviceTier = env.CODEX_SERVICE_TIER ?? "priority";
+      const serviceTier = env.CODEX_SERVICE_TIER || "priority";
       if (!CODEX_SERVICE_TIERS.includes(serviceTier as CodexServiceTier))
         throw new Error(`CODEX_SERVICE_TIER must be one of ${CODEX_SERVICE_TIERS.join(", ")}: ${serviceTier}`);
       return createCodexProvider({
         ...connectionFrom("codex", env),
-        model: env.CODEX_MODEL ?? "gpt-6-astra",
+        model: env.CODEX_MODEL || "gpt-6-astra",
         effort,
         serviceTier: serviceTier as CodexServiceTier,
       });
@@ -391,13 +389,13 @@ export function providerFromEnv(env: Env = process.env): Provider {
     case "openrouter":
       return createOpenRouterProvider({
         ...connectionFrom("openrouter", env),
-        model: env.OPENROUTER_MODEL ?? "openai/gpt-6-luna",
+        model: env.OPENROUTER_MODEL || "openai/gpt-6-luna",
         effort,
       });
     case "claude":
-      return createClaudeProvider({ ...connectionFrom("claude", env), model: env.SLT_MODEL ?? "claude-opus-5-5", effort });
+      return createClaudeProvider({ ...connectionFrom("claude", env), model: env.ANTHROPIC_MODEL || env.SLT_MODEL || "claude-opus-5-5", effort });
     case "openai":
-      return createOpenAIProvider({ ...connectionFrom("openai", env), model: env.OPENAI_MODEL ?? "gpt-6-luna", effort });
+      return createOpenAIProvider({ ...connectionFrom("openai", env), model: env.OPENAI_MODEL || "gpt-6-luna", effort });
     case "mock":
       return mockProvider;
     default:
@@ -405,11 +403,22 @@ export function providerFromEnv(env: Env = process.env): Provider {
   }
 }
 
-export function createTranslator(provider: Provider = providerFromEnv(), dbPath = join(DATA_DIR, "cache.sqlite")) {
-  mkdirSync(dirname(dbPath), { recursive: true });
-  const db = new Database(dbPath, { create: true });
+const databases = new Map<string, Database>();
+
+function openCache(path: string) {
+  mkdirSync(dirname(path), { recursive: true });
+  let db = databases.get(path);
+  if (!db) {
+    db = new Database(path, { create: true });
+    databases.set(path, db);
+  }
   db.run("CREATE TABLE IF NOT EXISTS translations (key TEXT PRIMARY KEY, lines TEXT NOT NULL, created INTEGER NOT NULL)");
-  db.run("DELETE FROM translations WHERE key NOT LIKE ?", [`${PROMPT_VERSION}:%`]);
+  db.run("DELETE FROM translations WHERE key NOT LIKE ? OR created < ?", [`${PROMPT_VERSION}:%`, Date.now() - CACHE_TTL_MS]);
+  return db;
+}
+
+export function createTranslator(provider: Provider = providerFromEnv(), dbPath = join(DATA_DIR, "cache.sqlite")) {
+  const db = openCache(dbPath);
   const read = db.query<{ lines: string }, [string]>("SELECT lines FROM translations WHERE key = ?");
   const write = db.query("INSERT OR REPLACE INTO translations (key, lines, created) VALUES (?, ?, ?)");
   const jobs = new Map<string, { promise: Promise<(string | null)[]>; controller: AbortController; waiters: number }>();
@@ -463,7 +472,9 @@ export function createTranslator(provider: Provider = providerFromEnv(), dbPath 
     let job = jobs.get(key);
     if (!job) {
       const controller = new AbortController();
-      const promise = run(key, lang, lines, controller.signal).finally(() => jobs.delete(key));
+      const promise = run(key, lang, lines, controller.signal).finally(() => {
+        if (jobs.get(key)?.controller === controller) jobs.delete(key);
+      });
       promise.catch(() => {});
       job = { promise, controller, waiters: 0 };
       jobs.set(key, job);
@@ -475,7 +486,10 @@ export function createTranslator(provider: Provider = providerFromEnv(), dbPath 
       return await (signal ? raceAbort(current.promise, signal) : current.promise);
     } finally {
       current.waiters--;
-      if (current.waiters === 0 && signal?.aborted) current.controller.abort();
+      if (current.waiters === 0 && signal?.aborted) {
+        current.controller.abort();
+        if (jobs.get(key) === current) jobs.delete(key);
+      }
     }
   };
 }

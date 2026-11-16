@@ -1,9 +1,9 @@
 import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { CONNECTIONS, translatorId, type Provider } from "./translator";
+import { CONNECTIONS, providerFromEnv, translatorId, type Provider } from "./translator";
 
 type Env = Record<string, string | undefined>;
-export type SaveError = "invalid_translator" | "invalid_url" | "invalid_key" | "key_required" | "key_missing";
+type SaveError = "invalid_translator" | "invalid_url" | "invalid_key" | "key_required" | "key_missing" | "invalid_config";
 
 const TEST_LINE = "The quiet river keeps on running.";
 const TEST_TIMEOUT_MS = 30_000;
@@ -70,15 +70,27 @@ export function resolveSettings(input: unknown, env: Env): SaveError | Record<st
   if (!key && !env[keyVar]) return "key_missing";
   if (!key && parseUrl(env[urlVar] || defaultUrl)?.origin !== parseUrl(url)?.origin) return "key_required";
 
-  return { SLT_TRANSLATOR: translator, [urlVar]: url, ...(key ? { [keyVar]: key } : {}) };
+  const updates = { SLT_TRANSLATOR: translator, [urlVar]: url, ...(key ? { [keyVar]: key } : {}) };
+  try {
+    providerFromEnv({ ...env, ...updates });
+  } catch {
+    return "invalid_config";
+  }
+  return updates;
 }
 
-export async function saveSettings(input: unknown, env: Env, envFile: string): Promise<SaveError | null> {
-  const updates = resolveSettings(input, env);
-  if (typeof updates === "string") return updates;
-  await updateEnvFile(envFile, updates);
-  Object.assign(env, updates);
-  return null;
+let saving: Promise<unknown> = Promise.resolve();
+
+export function saveSettings(input: unknown, env: Env, envFile: string) {
+  const run = saving.then(async (): Promise<SaveError | null> => {
+    const updates = resolveSettings(input, env);
+    if (typeof updates === "string") return updates;
+    await updateEnvFile(envFile, updates);
+    Object.assign(env, updates);
+    return null;
+  });
+  saving = run.catch(() => {});
+  return run;
 }
 
 export async function runConnectionTest(provider: Provider, signal: AbortSignal) {

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { createOpenRouterProvider, providerFromEnv } from "../src/translator";
+import { classifyFailure, createOpenRouterProvider, providerFromEnv } from "../src/translator";
 
 let handler: (body: Record<string, unknown>, headers: Headers) => Response | Promise<Response> = () => new Response("unset", { status: 500 });
 const requests: Record<string, unknown>[] = [];
@@ -85,6 +85,14 @@ test("treats an error object inside a 200 response by its code", async () => {
   };
   await expect(provider().translate("ko", [{ i: 0, text: "x" }])).rejects.toThrow("400");
   expect(calls).toBe(1);
+});
+
+test("an error object inside a 200 response is classified by its code, not by the 200", async () => {
+  for (const [code, failure] of [[401, "rejected"], [402, "no_credit"]] as const) {
+    handler = () => Response.json({ error: { code, message: "no" } });
+    const error = await provider().translate("ko", [{ i: 0, text: "x" }]).catch((caught) => caught);
+    expect(classifyFailure(error)).toBe(failure);
+  }
 });
 
 test("a cut-off answer fails without retry", async () => {

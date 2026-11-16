@@ -105,6 +105,56 @@ test("retries 502 and succeeds", async () => {
   expect(calls).toBe(3);
 });
 
+test("a stream that breaks halfway is retried", async () => {
+  let connections = 0;
+  const answered = new WeakSet<object>();
+  const body = streamOf(ANSWER).map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+  const flaky = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open() {
+        connections++;
+      },
+      data(socket) {
+        if (answered.has(socket)) return;
+        answered.add(socket);
+        if (connections === 1) {
+          const part = 'data: {"type":"response.output_text.delta","delta":"{"}\n\n';
+          socket.write(`HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n${part.length.toString(16)}\r\n${part}\r\n`);
+          setTimeout(() => socket.terminate(), 20);
+        } else {
+          socket.write(`HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: ${Buffer.byteLength(body)}\r\nconnection: close\r\n\r\n${body}`);
+          socket.end();
+        }
+      },
+    },
+  });
+  try {
+    const flakyProvider = createCodexProvider({ baseUrl: `http://127.0.0.1:${flaky.port}/v1`, apiKey: "cg_test", model: "gpt-6-astra", effort: "low", retryDelayMs: 1 });
+    expect(await flakyProvider.translate("ko", [{ i: 0, text: "x" }])).toHaveLength(2);
+    expect(connections).toBe(2);
+  } finally {
+    flaky.stop(true);
+  }
+});
+
+test("retries rate limits and server errors, but not an expired gateway login", async () => {
+  for (const status of [429, 500, 504]) {
+    let calls = 0;
+    handler = () => (++calls < 2 ? new Response("busy", { status }) : sse(streamOf(ANSWER)));
+    expect(await provider().translate("ko", [{ i: 0, text: "x" }])).toHaveLength(2);
+    expect(calls).toBe(2);
+  }
+  let calls = 0;
+  handler = () => {
+    calls++;
+    return new Response("login expired", { status: 503 });
+  };
+  await expect(provider().translate("ko", [{ i: 0, text: "x" }])).rejects.toThrow("503");
+  expect(calls).toBe(1);
+});
+
 test("does not retry 401", async () => {
   let calls = 0;
   handler = () => {
@@ -162,6 +212,10 @@ test("providerFromEnv defaults to the codex gateway", () => {
   expect(providerFromEnv({}).id).toBe("codex:gpt-6-astra:medium");
   expect(providerFromEnv({ SLT_TRANSLATOR: "mock" }).id).toBe("mock");
   expect(() => providerFromEnv({ SLT_TRANSLATOR: "nope" })).toThrow();
+});
+
+test("blank environment values fall back to the defaults", () => {
+  expect(providerFromEnv({ SLT_TRANSLATOR: "", SLT_EFFORT: "", CODEX_MODEL: "", CODEX_SERVICE_TIER: "" }).id).toBe("codex:gpt-6-astra:medium");
 });
 
 test("service tier default leaves service_tier out of the request", async () => {

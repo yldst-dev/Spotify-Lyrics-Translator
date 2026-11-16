@@ -11,18 +11,28 @@ const TAG_PATTERN = /<script[^>]*data-lyrics-translator[^>]*><\/script>/g;
 const HASH_PATTERN = /data-lyrics-translator="([0-9a-f]+)"/;
 const ANCHOR = '<script defer="defer" src="/xpui-snapshot.js">';
 
-export type PatchState = { version: string; patchedHash: string | null };
+type PatchState = { version: string; patchedHash: string | null };
 
 export const hashFile = async (path: string, salt = "") =>
   new Bun.CryptoHasher("sha256").update(await Bun.file(path).arrayBuffer()).update(salt).digest("hex").slice(0, 16);
 
 export async function loadToken(dataDir: string) {
   const path = join(dataDir, "auth-token");
-  const saved = (await Bun.file(path).text().catch(() => "")).trim();
+  const read = async () => (await Bun.file(path).text().catch(() => "")).trim();
+  const saved = await read();
   if (saved) return saved;
   const token = randomBytes(32).toString("hex");
   await mkdir(dataDir, { recursive: true });
-  await writeFile(path, token, { mode: 0o600, flag: "wx" });
+  try {
+    await writeFile(path, token, { mode: 0o600, flag: "wx" });
+    return token;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  await Bun.sleep(100);
+  const raced = await read();
+  if (raced) return raced;
+  await writeFile(path, token, { mode: 0o600 });
   return token;
 }
 
@@ -56,6 +66,13 @@ export function createPatcher({ app, dataDir }: { app: string; dataDir: string }
     await Promise.all(byAge.sort((a, b) => b.mtime - a.mtime).slice(1).map(({ path }) => rm(path)));
   }
 
+  async function writeSpa(dir: string, ...names: string[]) {
+    const zipped = await $`zip -X ${spa} ${names}`.cwd(dir).quiet().nothrow();
+    if (zipped.exitCode === 0) return;
+    const reason = zipped.stderr.toString().trim() || `exit code ${zipped.exitCode}`;
+    throw new Error(`could not update ${spa}: ${reason}. If macOS blocked it, turn on App Management for ${process.execPath} in System Settings.`);
+  }
+
   async function patchState(): Promise<PatchState> {
     const index = await readIndex();
     return {
@@ -77,7 +94,7 @@ export function createPatcher({ app, dataDir }: { app: string; dataDir: string }
     await withStaging(async (dir) => {
       await writeFile(join(dir, "index.html"), patched);
       await copyFile(scriptPath, join(dir, SCRIPT_NAME));
-      await $`zip -q -X ${spa} index.html ${SCRIPT_NAME}`.cwd(dir).quiet();
+      await writeSpa(dir, "index.html", SCRIPT_NAME);
     });
     return { version, hash };
   }
@@ -87,7 +104,7 @@ export function createPatcher({ app, dataDir }: { app: string; dataDir: string }
     if (!index.includes(MARKER)) return false;
     await withStaging(async (dir) => {
       await writeFile(join(dir, "index.html"), index.replace(TAG_PATTERN, ""));
-      await $`zip -q -X ${spa} index.html`.cwd(dir).quiet();
+      await writeSpa(dir, "index.html");
       await $`zip -q -d ${spa} ${SCRIPT_NAME}`.quiet().nothrow();
     });
     return true;

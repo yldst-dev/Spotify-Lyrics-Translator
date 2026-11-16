@@ -60,3 +60,10 @@ test("a missing key fails before any request", async () => {
 test("the provider from env defaults to the current Opus model", () => {
   expect(providerFromEnv({ SLT_TRANSLATOR: "claude", SLT_EFFORT: "low" }).id).toBe("claude:claude-opus-5-5:low");
 });
+
+test("ANTHROPIC_MODEL picks the model and the old SLT_MODEL still works", () => {
+  const claude = { SLT_TRANSLATOR: "claude", SLT_EFFORT: "low" };
+  expect(providerFromEnv({ ...claude, ANTHROPIC_MODEL: "m-new", SLT_MODEL: "m-old" }).id).toBe("claude:m-new:low");
+  expect(providerFromEnv({ ...claude, SLT_MODEL: "m-old" }).id).toBe("claude:m-old:low");
+  expect(providerFromEnv({ ...claude, ANTHROPIC_MODEL: "" }).id).toBe("claude:claude-opus-5-5:low");
+});

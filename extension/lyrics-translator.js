@@ -22,6 +22,8 @@
     key_required: "다른 서버로 주소를 바꾸면 API 키도 다시 입력해야 합니다.",
     key_missing: "이 번역기의 API 키를 입력해 주세요.",
     invalid_translator: "지원하지 않는 번역기입니다.",
+    invalid_config: "저장된 설정에 시작할 수 없는 값이 있습니다. .env의 SLT_EFFORT나 CODEX_SERVICE_TIER 같은 값을 확인해 주세요.",
+    unauthorized: "데몬이 이 Spotify의 인증 토큰을 받아들이지 않습니다. Spotify를 완전히 종료했다가 다시 켜 주세요.",
   };
   const TEST_FAILURES = {
     rejected: "API 키가 거부되었습니다. 키를 확인해 주세요.",

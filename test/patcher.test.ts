@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPatcher, loadToken } from "../src/patcher";
@@ -67,11 +67,30 @@ test("a new Spotify version keeps only its backup and the newest older one", asy
   expect((await readdir(data)).sort()).toEqual(["auth-token", "cache.sqlite", "xpui-3.spa", "xpui-9.9.9.spa"]);
 });
 
+test("an empty token file is replaced instead of crashing the daemon", async () => {
+  const data = join(root, "data-empty-token");
+  await mkdir(data);
+  await writeFile(join(data, "auth-token"), "");
+  const token = await loadToken(data);
+  expect(token).toMatch(/^[0-9a-f]{64}$/);
+  expect(await loadToken(data)).toBe(token);
+});
+
 test("reapplying replaces the tag instead of stacking it", async () => {
   const script = join(root, "b.js");
   await writeFile(script, "console.log(2);");
   await patcher.apply(script);
   expect((await index()).match(/lyrics-translator\.js/g)?.length).toBe(1);
+});
+
+test("apply names the folder and the App Management fix when Spotify's folder is not writable", async () => {
+  const apps = join(root, "Spotify.app/Contents/Resources/Apps");
+  await chmod(apps, 0o555);
+  try {
+    await expect(patcher.apply(join(root, "b.js"))).rejects.toThrow(/could not update .*xpui\.spa: .*App Management/);
+  } finally {
+    await chmod(apps, 0o755);
+  }
 });
 
 test("restore returns index.html to the original", async () => {

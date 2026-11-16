@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const dir = mkdtempSync(join(tmpdir(), "slt-tr-"));
 process.env.SLT_DATA_DIR = dir;
-const { classifyFailure, createTranslator, isTransient, isTranslatable, needsRetranslation, parseLines } = await import("../src/translator");
+const { classifyFailure, createTranslator, isSupportedLanguage, isTransient, isTranslatable, needsRetranslation, parseLines } = await import("../src/translator");
 const PROMPT_PREFIX = (await Bun.file(new URL("../src/translator.ts", import.meta.url)).text()).match(/PROMPT_VERSION = (\d+)/)![1] + ":";
 const asProvider = (translate: (lang: string, items: { i: number; text: string }[]) => Promise<{ i: number; text: string }[]>) => ({ id: "test", translate });
 
@@ -106,6 +106,30 @@ test("upstream keeps running while another waiter still wants it", async () => {
   expect(seen[0].aborted).toBe(false);
 });
 
+test("a request that arrives after every waiter left starts a fresh upstream call", async () => {
+  let calls = 0;
+  const provider = asProvider(async () => []);
+  provider.translate = ((_lang: string, items: { i: number; text: string }[], { signal }: { signal?: AbortSignal } = {}) =>
+    new Promise((resolve, reject) => {
+      if (++calls > 1) return resolve(items.map(({ i }) => ({ i, text: "완료" })));
+      signal?.addEventListener("abort", () => setTimeout(() => reject(signal.reason), 100));
+    })) as typeof provider.translate;
+  const translate = createTranslator(provider, join(dir, "f.sqlite"));
+  const leaving = new AbortController();
+  const first = translate(TRACK, "ko", ["a lantern in the rain"], leaving.signal);
+  await Bun.sleep(20);
+  leaving.abort();
+  await expect(first).rejects.toThrow();
+  expect(await translate(TRACK, "ko", ["a lantern in the rain"])).toEqual(["완료"]);
+  expect(calls).toBe(2);
+});
+
+test("only the languages the table names are supported, not inherited object keys", () => {
+  expect(isSupportedLanguage("ko")).toBe(true);
+  expect(isSupportedLanguage("zh-TW")).toBe(true);
+  for (const inherited of ["constructor", "toString", "__proto__"]) expect(isSupportedLanguage(inherited)).toBe(false);
+});
+
 test("isTranslatable decides by script for Japanese and Chinese targets", () => {
   expect(isTranslatable("夜の駅で待ってる", "ja")).toBe(false);
   expect(isTranslatable("风吹过城市", "ja")).toBe(true);
@@ -197,13 +221,26 @@ test("rows from older prompt versions are removed on open", () => {
   const path = join(dir, "stale.sqlite");
   createTranslator(asProvider(async () => []), path);
   const db = new Database(path);
-  const insert = db.query("INSERT INTO translations (key, lines, created) VALUES (?, '[]', 0)");
-  insert.run("1:mock:ko:x:y");
-  insert.run(`${PROMPT_PREFIX}codex:ko:x:y`);
+  const insert = db.query("INSERT INTO translations (key, lines, created) VALUES (?, '[]', ?)");
+  insert.run("1:mock:ko:x:y", Date.now());
+  insert.run(`${PROMPT_PREFIX}codex:ko:x:y`, Date.now());
   db.close();
   createTranslator(asProvider(async () => []), path);
   const keys = new Database(path).query<{ key: string }, []>("SELECT key FROM translations").all().map(({ key }) => key);
   expect(keys).toEqual([`${PROMPT_PREFIX}codex:ko:x:y`]);
+});
+
+test("rows older than the retention period are removed on open", () => {
+  const path = join(dir, "expired.sqlite");
+  createTranslator(asProvider(async () => []), path);
+  const db = new Database(path);
+  const insert = db.query("INSERT INTO translations (key, lines, created) VALUES (?, '[]', ?)");
+  insert.run(`${PROMPT_PREFIX}codex:ko:x:old`, Date.now() - 400 * 86_400_000);
+  insert.run(`${PROMPT_PREFIX}codex:ko:x:new`, Date.now());
+  db.close();
+  createTranslator(asProvider(async () => []), path);
+  const keys = new Database(path).query<{ key: string }, []>("SELECT key FROM translations").all().map(({ key }) => key);
+  expect(keys).toEqual([`${PROMPT_PREFIX}codex:ko:x:new`]);
 });
 
 test("long runs of m in a line do not make the vocalization check slow", () => {

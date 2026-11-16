@@ -30,7 +30,7 @@ test("readSettings lists every translator without any key", () => {
     { id: "codex", label: "Codex Gateway", apiUrl: "http://192.168.0.2:8080/v1", hasKey: false, plainHttp: true },
     { id: "openrouter", label: "OpenRouter", apiUrl: "https://openrouter.ai/api/v1", hasKey: true, plainHttp: false },
     { id: "claude", label: "Claude", apiUrl: "https://api.anthropic.com", hasKey: false, plainHttp: false },
-    { id: "openai", label: "OpenAI (ChatGPT API)", apiUrl: "https://api.openai.com/v1", hasKey: false, plainHttp: false },
+    { id: "openai", label: "OpenAI API", apiUrl: "https://api.openai.com/v1", hasKey: false, plainHttp: false },
   ]);
   expect(JSON.stringify(settings)).not.toContain("secret-value");
 });
@@ -47,6 +47,18 @@ test("only known translators are accepted, including names found on Object.proto
     expect(resolveSettings({ translator, apiUrl: "https://example.com", apiKey: "k" }, {})).toBe("invalid_translator");
   }
   expect(resolveSettings({ apiUrl: "https://example.com", apiKey: "k" }, { SLT_TRANSLATOR: "mock" })).toBe("invalid_translator");
+});
+
+test("a saved configuration the daemon could not start with is refused", () => {
+  expect(resolveSettings({ translator: "codex", apiUrl: "https://example.com", apiKey: "k" }, { CODEX_SERVICE_TIER: "fast" })).toBe("invalid_config");
+});
+
+test("saves that arrive together all land in the file", async () => {
+  const path = join(dir, "race.env");
+  const env: Record<string, string | undefined> = { SLT_TRANSLATOR: "claude" };
+  const results = await Promise.all([1, 2, 3, 4, 5, 6].map((n) => saveSettings({ apiUrl: `https://proxy${n}.example`, apiKey: `key-${n}` }, env, path)));
+  expect(results).toEqual(Array(6).fill(null));
+  expect(await Bun.file(path).text()).toContain("ANTHROPIC_API_KEY=key-6\n");
 });
 
 test("a translator without a saved key needs one", () => {

@@ -69,9 +69,10 @@ Spotify 데스크톱 가사 화면에 LLM 번역을 줄마다 붙여 주는 도�
 | 항목 | 확인한 버전 |
 |---|---|
 | macOS | 27.2 |
-| Spotify 데스크톱 | 1.3.6.1921 |
+| Spotify 데스크톱 | 1.3.9.2055 |
 | Bun | 1.3.5 |
 | `zip`, `unzip` | macOS 기본 포함 |
+| `git` | 자동 업데이트와 에이전트 설치에 필요합니다 |
 
 패처가 `/Applications/Spotify.app` 안의 파일을 고치기 때문에, 명령을 실행하는 터미널 앱에 macOS의 "앱 관리" 권한이 있어야 합니다. 시스템 설정의 개인정보 보호 및 보안에서 켤 수 있습니다.
 
@@ -119,7 +120,7 @@ Spotify 설정 화면 맨 위의 "가사 번역"에서 바꿉니다.
 - **번역 켜고 끄기**: Spotify 창에서 `Alt+T`(`Option+T`)를 누릅니다. 입력칸에 글자를 넣는 중에는 동작하지 않습니다. 설정은 기억됩니다.
 - **번역 시점**: 가사 화면이 열려 있을 때만 지금 곡을 번역합니다. 가사 화면을 닫아 두면 요청하지 않습니다.
 - **곡 넘기기**: 빠르게 여러 곡을 넘기면 멈춘 곡 하나만 번역합니다. 넘어간 곡의 진행 중 요청은 번역기 호출까지 취소됩니다.
-- **목표 언어**: 한국어로 고정되어 있습니다. 바꾸려면 `extension/lyrics-translator.js`의 `LANG`을 고칩니다. 쓸 수 있는 값은 `ko`, `en`, `ja`, `zh-CN`, `zh-TW`, `es`, `fr`, `de`입니다.
+- **목표 언어**: 한국어로 고정되어 있습니다. 바꾸려면 `extension/lyrics-translator.js`의 `LANG`을 고칩니다. 쓸 수 있는 값은 `ko`, `en`, `ja`, `zh-CN`, `zh-TW`, `es`, `fr`, `de`입니다. 추적 중인 파일을 고치면 자동 업데이트가 `local changes`로 멈추므로 `SLT_AUTO_UPDATE=0`도 함께 넣습니다.
 
 ## 번역기 설정
 
@@ -139,6 +140,10 @@ Spotify 설정 화면이나 `.env`의 `SLT_TRANSLATOR`로 번역기를 고릅니
 |---|---|---|
 | `SLT_EFFORT` | `medium` | 추론 강도. 낮을수록 빠르고 저렴합니다 |
 | `SLT_AUTO_UPDATE` | `1` | `0`이면 자동 업데이트를 끕니다 |
+| `SLT_PORT` | `47831` | 데몬이 받는 포트. 확장의 `API`도 함께 바꿉니다 |
+| `SPOTIFY_APP` | `/Applications/Spotify.app` | 패치할 Spotify 앱 경로 |
+| `SLT_DATA_DIR` | `~/Library/Application Support/spotify-lyrics-translator` | 캐시, 로그, 토큰, 원본 백업을 두는 폴더 |
+| `SLT_UPDATE_REPO` | 이 프로젝트의 릴리스 저장소 | 자동 업데이트가 코드를 받아 오는 `소유자/저장소`. 이 값을 바꾸면 그 저장소의 코드를 이 기기에서 실행하게 되므로 믿을 수 있는 곳만 씁니다 |
 
 번역기별 변수는 아래를 펼쳐 봅니다.
 
@@ -184,7 +189,7 @@ fast 모드는 기본으로 켜져 있습니다. 요청에 `"service_tier": "pri
 |---|---|---|
 | `ANTHROPIC_API_KEY` | 없음 | Anthropic API 키 |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | 바꿀 일이 거의 없습니다 |
-| `SLT_MODEL` | `claude-opus-5-5` | 모델 ID |
+| `ANTHROPIC_MODEL` | `claude-opus-5-5` | 모델 ID. 예전 이름인 `SLT_MODEL`도 계속 읽습니다 |
 
 </details>
 
@@ -289,7 +294,7 @@ Spotify가 업데이트되면 앱 전체가 교체되어 패치가 풀립니다.
 
 ## 문제 해결
 
-로그부터 봅니다. 로그에는 곡 ID, 번역된 줄 수, 걸린 시간만 남고 가사 내용은 남지 않습니다.
+로그부터 봅니다. 평소에는 곡 ID, 번역된 줄 수, 걸린 시간만 남고 가사 내용은 남지 않습니다. 번역기가 오류를 돌려주면 그 응답의 앞부분(최대 300자)이 함께 남을 수 있습니다. 로그가 5MB를 넘으면 `daemon.log.1`로 한 벌 복사하고 비웁니다.
 
 ```bash
 bun run logs
@@ -303,11 +308,12 @@ bun run logs
 | `translated <곡 ID> 37/39 lines` | 정상입니다. 번역되지 않은 줄은 빈 줄, 기호 줄, 이미 한국어인 줄입니다 |
 | `cancelled <곡 ID>` | 번역 중에 곡을 넘겨서 취소된 것입니다. 정상입니다 |
 | 번역이 붙지 않고 로그에 같은 실패가 멈춤 | 일시적인 실패는 10초, 30초, 120초 뒤에 다시 시도하고 멈춥니다. 키 오류처럼 다시 해도 소용없는 실패는 바로 멈춥니다. 원인을 고친 뒤 설정 화면에서 저장하거나 곡을 바꾸거나 가사 화면을 다시 열면 다시 시도합니다 |
-| 데몬을 다시 시작한 뒤 번역이 멈춤 | 데몬과 Spotify 안의 확장이 쓰는 토큰이 달라졌을 수 있습니다. Spotify를 다시 켭니다 |
+| 데이터 폴더의 `auth-token`을 지운 뒤 번역이 멈춤 | 토큰이 새로 만들어져 Spotify 안의 확장이 쓰는 토큰과 달라졌습니다. 데몬이 확장을 다시 주입하므로 Spotify를 다시 켭니다. 데몬을 다시 시작하는 것만으로는 토큰이 바뀌지 않습니다 |
 | `warning: the API URL uses plain http` | API 키와 가사가 암호화 없이 전송됩니다. 게이트웨이에 HTTPS를 붙이고 주소를 바꾸는 것을 권합니다 |
-| `... is not set` | `.env`에 해당 키가 없습니다. 넣은 뒤 `bun run restart-agent` |
-| `codex gateway 401`, `openrouter 401`, `openai 401` | 키가 틀렸거나 폐기되었습니다 |
-| `codex gateway 503` | 게이트웨이의 Codex 로그인이 만료되었습니다. 게이트웨이 관리 화면에서 다시 로그인합니다 |
+| `... is not set` | 해당 번역기의 주소나 키가 비어 있습니다. Spotify 설정 화면에서 저장하면 바로 적용되고, `.env`를 고쳤다면 `bun run restart-agent`를 실행합니다 |
+| `codex gateway 401`, `openrouter 401`, `openai 401`, `Claude API 401` | 키가 틀렸거나 폐기되었습니다 |
+| `codex gateway 503` | 게이트웨이의 Codex 로그인이 만료되었습니다. 다시 시도해도 소용없어 바로 멈춥니다. 게이트웨이 관리 화면에서 다시 로그인합니다 |
+| `invalid translate request` | 곡이 400줄을 넘거나 한 줄이 500자를 넘어 요청이 거절되었습니다. 이 곡은 번역하지 않습니다 |
 | `gateway unreachable` | 게이트웨이에 닿지 않습니다. 같은 LAN에 있는지, 방화벽이 이 기기를 허용하는지 확인합니다 |
 | `openrouter 402` | OpenRouter 크레딧이 부족합니다 |
 | `openai 429` | OpenAI 사용 한도를 넘었거나 크레딧이 부족합니다 |
@@ -323,7 +329,7 @@ curl https://gateway.example/health
 
 | 로그 | 원인과 대응 |
 |---|---|
-| `patch check failed` | 앱 폴더를 고칠 권한이 없을 수 있습니다. 터미널과 Bun에 "앱 관리" 권한을 줍니다 |
+| `patch check failed` | 앱 폴더를 고칠 권한이 없을 수 있습니다. 터미널과 Bun에 "앱 관리" 권한을 줍니다. 같은 실패는 한 번만 기록하고, 메시지에 권한을 줘야 할 Bun 경로가 함께 나옵니다. 권한을 켠 뒤 `bun run restart-agent`를 실행합니다 |
 | `update check on spotify quit: v0.2.1 is up to date` | 확인했고 이미 최신입니다 |
 | `updated 0.2.0 to v0.2.1 on spotify quit` | 자동 업데이트가 끝났습니다. Spotify를 켜면 새 버전이 로드됩니다 |
 | `update to vX.Y.Z skipped on ...` | 뒤에 붙은 이유 때문에 건너뛰었습니다. [자동 업데이트](#자동-업데이트)를 봅니다 |
@@ -339,12 +345,13 @@ curl https://gateway.example/health
 - **코드 서명**: 패치하는 동안에는 Spotify 앱의 코드 서명 검증이 실패합니다. 이미 설치된 앱은 실행할 때마다 서명을 다시 검사하지 않아서 실행에는 문제가 없습니다.
 - **Spicetify와 함께 쓰기**: 같은 파일을 고치므로 `spicetify apply`와 함께 쓰면 충돌할 수 있습니다.
 - **자동 업데이트**: 이 저장소의 정식 릴리스 코드를 받아 이 기기에서 실행합니다. [릴리스 서명](#릴리스-서명)을 켜면 등록한 키로 서명한 릴리스만 받습니다. 이 저장소를 믿을 수 없는 상황이면 `SLT_AUTO_UPDATE=0`으로 끕니다.
-- **포트 변경**: 포트를 바꾸려면 `SLT_PORT`와 `extension/lyrics-translator.js`의 `API`를 함께 바꿔야 합니다.
+- **포트 변경**: 포트를 바꾸려면 `SLT_PORT`와 `extension/lyrics-translator.js`의 `API`를 함께 바꿔야 합니다. 개발 모드를 쓴다면 `extension/dev-loader.js`의 `API`도 바꿉니다. 추적 중인 파일을 고치므로 `SLT_AUTO_UPDATE=0`도 함께 넣습니다.
 
 ## 한계
 
 - 가사 화면이 닫혀 있으면 번역하지 않으므로, 처음 듣는 곡은 가사를 연 뒤 잠시 기다려야 합니다.
 - 번역은 곡 전체를 한 번에 받아서 붙입니다. 조각 단위로 먼저 보여 주지는 않습니다.
+- 곡이 400줄을 넘거나 한 줄이 500자를 넘으면 그 곡은 번역하지 않고, 데몬 로그에 `invalid translate request`가 남습니다.
 - 설정 화면의 "가사 번역"은 Spotify 설정 검색에 걸러지지 않고 항상 보입니다.
 - 설정 화면에서는 번역기, API URL, 키만 바꿀 수 있습니다. 모델과 effort는 `.env`에서 바꿉니다.
 - Spotify가 가사 화면 구조(`data-testid="lyrics-line"`)나 가사 API 경로(`color-lyrics/v2`)를 바꾸면 번역이 붙지 않습니다. 이때도 Spotify 원래 가사 화면은 그대로 나옵니다.
