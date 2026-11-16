@@ -19,7 +19,7 @@ Spicetify 없이 동작하고, Spotify가 업데이트되어 패치가 풀리면
 - **섞인 언어도 끝까지**: 일본어, 중국어, 영어, 한국어가 섞인 가사도 줄마다 번역합니다. 한 줄 안에 여러 언어가 섞여 있으면 그 줄 전체를 한국어로 옮깁니다.
 - **번역이 필요 없는 줄은 건너뜀**: 전부 한국어인 줄, 빈 줄, `♪` 같은 기호 줄, "oh", "la la" 같은 추임새는 번역하지 않습니다.
 - **남은 줄은 한 번 더**: 번역을 받은 뒤 다른 언어가 그대로 남은 줄이 있으면, 그 줄만 곡 전체를 참고해 한 번 더 번역합니다.
-- **곡 단위 캐시**: 한 번 번역한 곡은 캐시에서 바로 나옵니다.
+- **곡 단위 캐시**: 한 번 번역한 곡은 캐시에서 바로 나옵니다. 캐시는 180일이 지나면 지웁니다.
 - **설정 화면에서 변경**: Spotify 설정 화면에서 번역기, API URL, API 키를 바꾸고 연결을 시험합니다.
 - **번역기 선택**: Codex Gateway, OpenRouter, Claude, OpenAI 중에서 고릅니다.
 
@@ -431,6 +431,7 @@ src/
   translator.ts   번역기(codex, OpenRouter, Claude, OpenAI, mock), 캐시, 요청 취소
   settings.ts     설정 화면의 입력값 검증, .env 저장, 연결 테스트
   daemon.ts       로컬 번역 서버와 자동 재패치
+  logs.ts         daemon.log 크기 제한과 한 벌 복사
   updater.ts      GitHub 릴리스 확인과 fast-forward 업데이트
   cli.ts          명령어와 launchd 등록
 extension/
